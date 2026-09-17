@@ -1,0 +1,3103 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>The Gutter &amp; Glory Studio — A Graphic Novel Escape Room</title>
+<meta name="description" content="A single-file, point-and-click digital escape room built on the Elements of a Graphic Novel: nine studio locks, a master codex, and a printable certificate.">
+<style>
+/* ============================================================
+   THE GUTTER & GLORY STUDIO
+   Aesthetic: ink-and-Ben-Day comic studio after hours.
+   Warm near-black ground, newsprint cream stock, process cyan
+   blue-line, vermilion pulp accent, ochre highlight.
+   Zero external dependencies: local font stacks, inline SVG.
+   ============================================================ */
+
+:root{
+  --ink:        #17140f;
+  --ink-2:      #221d16;
+  --ink-3:      #302820;
+  --news:       #f1e3c8;
+  --news-2:     #e3d1ad;
+  --news-3:     #cdb98f;
+  --cyan:       #2f9fd0;
+  --cyan-dim:   #1c6b8f;
+  --verm:       #d6402c;
+  --ochre:      #e3a723;
+  --moss:       #6f8f4a;
+
+  --font-display: Impact, "Haettenschweiler", "Franklin Gothic Bold", "Arial Black", sans-serif;
+  --font-body: "Trebuchet MS", "Lucida Grande", "Lucida Sans Unicode", sans-serif;
+  --font-tech: "Courier New", Courier, monospace;
+  --font-serif: "Palatino Linotype", Palatino, "Book Antiqua", Georgia, serif;
+
+  --frame: 5px solid var(--ink);
+  --gutter: 14px;
+}
+
+*,*::before,*::after{box-sizing:border-box}
+html,body{margin:0;padding:0}
+html{-webkit-text-size-adjust:100%}
+
+body{
+  font-family:var(--font-body);
+  background-color:var(--ink);
+  color:var(--news);
+  line-height:1.5;
+  min-height:100vh;
+  overflow-x:hidden;
+}
+
+/* Ben-Day dot atmosphere, fixed so it never repaints on scroll.
+   This used to be a live CSS radial-gradient function (two tiled
+   gradients evaluated per-pixel). That is the actual pre-existing
+   flicker bug: .artifact:hover animates box-shadow, which cannot be
+   handled as a cheap GPU layer move and forces a software repaint of
+   nearby content on every transition frame; because this full-viewport
+   layer was never isolated onto its own compositor layer, that nearby
+   repaint dragged it along, and a live gradient re-dithers its fine
+   14px tiling slightly differently each time it's re-evaluated --
+   which reads as a fast, whole-page flicker synced to hovering.
+   Fix: bake the dots into a real inline SVG tile (decoded once, cached
+   like any image) instead of a function re-evaluated every repaint. */
+.atmos{
+  position:fixed; inset:0; z-index:0; pointer-events:none;
+  transform:translateZ(0); backface-visibility:hidden;
+  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='14'%3E%3Ccircle cx='7' cy='7' r='1.3' fill='%23d6402c' fill-opacity='.13'/%3E%3Ccircle cx='0' cy='0' r='1.3' fill='%232f9fd0' fill-opacity='.1'/%3E%3Ccircle cx='14' cy='0' r='1.3' fill='%232f9fd0' fill-opacity='.1'/%3E%3Ccircle cx='0' cy='14' r='1.3' fill='%232f9fd0' fill-opacity='.1'/%3E%3Ccircle cx='14' cy='14' r='1.3' fill='%232f9fd0' fill-opacity='.1'/%3E%3C/svg%3E");
+  background-repeat:repeat;
+  background-size:14px 14px;
+}
+.atmos::after{
+  content:""; position:absolute; inset:0;
+  background:radial-gradient(ellipse at 38% 30%, transparent 46%, rgba(0,0,0,.6) 100%);
+}
+
+/* ---------- the studio light ----------
+   One implied lamp, off-page up-left of the title plate. Rather than a
+   glow sitting behind the page (which read as "behind the content, not
+   overhead"), the light is expressed entirely as directional math on
+   each surface: relight() computes, per card, the real angle from that
+   card to the lamp and its distance-based intensity, then writes
+   --lamp-ang / --lamp-lit / --shade-dx / --shade-dy as inline custom
+   properties. Every participating surface uses those to run a
+   light-to-dark linear-gradient (border AND fill) angled toward the
+   lamp, plus an inset shadow that hugs the NEAR (lamp-facing) inner
+   edge -- the border reads as a raised frame around a recessed card,
+   so its own bulk blocks the light closest to the source (picture a
+   sunken mat around a photo: the shadow falls on the near edge, the
+   far edge stays lit because nothing stands between it and the lamp).
+   An inset shadow's dark area sits opposite its offset, so --shade-dx/
+   dy actually point AWAY from the lamp to land the dark side near it.
+   --flick is the single dial every one of those multiplies against --
+   1 = fully lit, never actually 0 (a real bulb dims, it doesn't cut
+   out). @property registers it as a plain number so the browser can
+   smoothly interpolate it like any other transitionable property
+   instead of us hand-rolling an easing curve in JS; flickerLoop() just
+   picks a random low (never zero) target and lets the transition ease
+   into and out of it on a randomized cadence. */
+@property --flick{
+  syntax:'<number>'; inherits:true; initial-value:1;
+}
+body{
+  --flick:1; transition:--flick .3s ease-in-out;
+  /* Must live here, not on :root -- --flick is set on body, and a
+     :root declaration referencing it would bind to html's @property
+     initial value (1) permanently, never actually animating. Alpha
+     .22-.55 so every panel's drop shadow breathes with the lamp
+     instead of sitting there as a flat, unreactive constant. */
+  --shadow-panel: 10px 10px 0 rgba(0,0,0, calc(.22 + .33 * var(--flick)));
+}
+/* Soft radial bleed centred on the lamp point, as if light is genuinely
+   spilling into the room air, not just hitting surfaces. Document-
+   anchored (position:absolute inside .shell, which is the positioned
+   ancestor), so it scrolls away with the page like everything else the
+   lamp lights, rather than tracking the viewport. relight() positions
+   it at the same Lx/Ly point used for all the per-card math. Driven
+   purely by opacity, not by animating the gradient itself -- opacity on
+   a promoted layer is a cheap compositor-only operation, whereas
+   re-rasterizing a full-page gradient's colour stops every flicker
+   frame is exactly the class of thing that caused the original
+   whole-page strobing bug this whole feature replaced. */
+.lamp-glow{
+  position:absolute; left:0; top:0; width:1600px; height:1600px;
+  margin:-800px 0 0 -800px; z-index:-1; pointer-events:none;
+  background:radial-gradient(circle, rgba(255,241,214,.5) 0%, rgba(255,230,180,.18) 40%, transparent 72%);
+  opacity:var(--flick);
+  will-change:opacity; transform:translateZ(0);
+}
+/* The fixture the glow and every card's lighting math are implying is
+   there -- now the actual provided assets (fixture/bulb/filament SVGs)
+   instead of a hand-drawn stand-in. Deliberately NOT nested inside
+   .shell: .shell is capped at z-index:1, so nothing inside it can ever
+   render above .veil (60) / .cert-veil (90) / .toast-stack (120) no
+   matter its own z-index. This sits directly in body instead, with
+   z-index high enough to stay above literally everything, including
+   open modals. position:absolute with no positioned ancestor still
+   anchors to the document's initial containing block (not the
+   viewport), so it scrolls away with the page exactly like every
+   other lamp-related element -- "absolute" and "document-anchored"
+   aren't in tension here. The fixture housing uses filter:brightness
+   (scales the whole rendered gradient, which already encodes its own
+   glow via colour stops, without risking a mismatch with the exact
+   Figma palette) -- but the BULB itself needed more than that: a
+   uniform brightness multiplier with a high floor barely dims at all
+   (confirmed: the original .7-1.2 range only dropped to ~.87 at the
+   flicker's lowest point, reads as "always lit"). The bulb's own
+   gradient stops are recoloured directly via color-mix() instead, so
+   dim genuinely means dim (mixing toward a dull, unlit glass tone),
+   and full lit shows the true bright Figma colour, not a washed-out
+   approximation of it. Halo is a blurred circle behind the glass,
+   same --flick-driven opacity as everything else. */
+.lamp-fixture{
+  position:absolute; top:0; left:14px; width:118px; height:58px; z-index:200; pointer-events:none;
+}
+/* The root <svg> defaults to overflow:hidden (per the SVG/UA
+   stylesheet, unlike normal HTML elements which default to visible) --
+   it clips its own painted content to the 118x58 viewBox. The halo
+   circle (cy=44, r=17) already geometrically reaches y=61, past that
+   58px height, before the blur even gets added on top; the result was
+   a hard clip right where the glow should be softly fading out. Only
+   the OUTER svg needs this -- the nested fixture/bulb/filament <svg>s
+   should keep clipping their own artwork exactly to their viewBoxes. */
+.lamp-fixture > svg{
+  overflow:visible;
+}
+.lamp-fixture .lamp-fixture-shape{
+  filter:brightness(calc(.6 + .4 * var(--flick)));
+}
+.lamp-fixture .lamp-halo{
+  opacity:calc(.12 + .58 * var(--flick));
+  filter:blur(5px);
+}
+.lamp-fixture .lamp-bulb-stop-a{
+  stop-color:color-mix(in srgb, #5c5240, #FFFBAE calc(var(--flick) * 100%));
+}
+.lamp-fixture .lamp-bulb-stop-b{
+  stop-color:color-mix(in srgb, #5c5240, #FFFBF1 calc(var(--flick) * 100%));
+}
+.lamp-fixture .lamp-bulb-shape{
+  filter:brightness(calc(.55 + .55 * var(--flick)));
+}
+.lamp-fixture .lamp-filament-shape{
+  opacity:calc(.15 + .85 * var(--flick));
+}
+
+/* ---------- shared comic panel ---------- */
+.panel{
+  background:var(--news);
+  color:var(--ink);
+  border:var(--frame);
+  box-shadow:var(--shadow-panel);
+  position:relative;
+}
+.panel::after{ /* newsprint tooth */
+  content:""; position:absolute; inset:0; pointer-events:none;
+  background-image:radial-gradient(rgba(23,20,15,.16) .6px, transparent .7px);
+  background-size:4px 4px; opacity:.5; mix-blend-mode:multiply;
+}
+
+/* ---------- shell ---------- */
+.shell{position:relative; z-index:1; max-width:1360px; margin:0 auto; padding:18px 18px 70px}
+
+/* ---------- masthead ---------- */
+header.masthead{display:grid; grid-template-columns:1fr auto; gap:var(--gutter); align-items:stretch; margin-bottom:var(--gutter)}
+.title-plate{
+  /* Directional light: fill brightens with a warm wash toward the lamp
+     (padding-box), border does the same plus keeps its original cream
+     colour as the always-visible floor (border-box). Both angled by
+     --lamp-ang, scaled by --lamp-lit * --flick. Defaults (0 lit) render
+     identically to the plain pre-light original. filter:brightness is
+     an extra, unmistakable pulse on the WHOLE plate (text, stripes,
+     everything) -- the gradient alone read as too subtle a shift to
+     register as an actual "flash" when the bulb flickers; this makes
+     the on/off swing obvious. At flick=0 it's brightness(1), i.e. no
+     change from the original, matching every other resting default. */
+  filter:brightness(calc(1 + .22 * var(--lamp-lit,0) * var(--flick)));
+  background-image:
+    linear-gradient(var(--lamp-ang,145deg), transparent 0%, rgba(255,248,225, calc(.75 * var(--lamp-lit,0) * var(--flick))) 100%),
+    linear-gradient(var(--ink-2), var(--ink-2)),
+    linear-gradient(var(--lamp-ang,145deg), transparent 0%, rgba(255,250,230, calc(1.3 * var(--lamp-lit,0) * var(--flick))) 100%),
+    /* This plate's border rests at cream (--news), not black ink like
+       every other frame in the room -- a deliberate original design
+       choice. That means brightening it further toward white barely
+       registers (cream -> near-white is a tiny numeric step compared
+       to the other cards' ink -> near-white swing, confirmed via
+       computed style: ~15-30 per channel here vs ~240 there). So the
+       far side needs to actively DARKEN as the near side brightens,
+       using the opposite-pointing angle, to get a comparable swing
+       instead of "doesn't seem to change." At rest (lit=0) this is
+       fully transparent -- still plain cream, unchanged baseline. */
+    linear-gradient(calc(var(--lamp-ang,145deg) + 180deg), transparent 0%, rgba(20,16,12, calc(.65 * var(--lamp-lit,0) * var(--flick))) 100%),
+    linear-gradient(var(--news), var(--news));
+  background-origin:padding-box, padding-box, border-box, border-box, border-box;
+  background-clip:padding-box, padding-box, border-box, border-box, border-box;
+  border:var(--frame); border-color:transparent;
+  padding:14px 22px 16px; transform:rotate(-.5deg);
+  /* inset shadow hugs the near (lamp-facing) edge -- the frame's own
+     bulk blocks the light closest to the source. Tightened the blur
+     (13px -> 7px) so it hugs the edge as a crisp cast rather than
+     spreading into a soft haze across the header text -- the same
+     class of problem the codex panel had, just less severe here
+     because of this text's size/weight; tightening instead of
+     removing keeps the depth cue this panel already had. */
+  box-shadow:
+    inset var(--shade-dx,8px) var(--shade-dy,8px) 7px rgba(0,0,0, calc(.3 * var(--lamp-lit,0) * var(--flick))),
+    var(--shadow-panel);
+  position:relative; overflow:hidden;
+}
+.title-plate::before{
+  content:""; position:absolute; inset:0;
+  background:repeating-linear-gradient(115deg, rgba(227,167,35,.10) 0 6px, transparent 6px 22px);
+}
+.kicker{
+  font-family:var(--font-tech); font-size:.68rem; font-weight:700; letter-spacing:.34em; text-transform:uppercase;
+  color:#fdfdf9; margin:0 0 4px; position:relative;
+}
+h1{
+  font-family:var(--font-display); font-weight:400; margin:0; position:relative;
+  font-size:clamp(2rem,6.2vw,4.1rem); line-height:.92; letter-spacing:.012em;
+  text-transform:uppercase;
+  /* color-mix() keeps every gradient stop fully opaque (no transparent
+     layers for anything to show through). --lamp-ang/--lamp-lit/--flick
+     are inherited straight from .title-plate; at rest (lit=0) both
+     mixes resolve to plain --news, the original flat colour. Widened
+     the mix percentages (55/80 -> 65/95) so the radiance swing reads
+     clearly, since this is supposed to be lit by the same overhead lamp
+     as everything else, not a subtle accent. */
+  background-image:linear-gradient(var(--lamp-ang,145deg),
+    color-mix(in srgb, var(--news), rgb(70,54,36) calc(65% * var(--lamp-lit,0) * var(--flick))) 0%,
+    color-mix(in srgb, var(--news), white calc(95% * var(--lamp-lit,0) * var(--flick))) 100%);
+  background-clip:text; -webkit-background-clip:text;
+  color:transparent; -webkit-text-fill-color:transparent;
+  /* text-shadow does NOT work here -- confirmed via an isolated test
+     page: combined with background-clip:text, the shadow renders IN
+     FRONT of the gradient fill instead of behind it. filter:drop-shadow()
+     operates on the element's final composited output instead of the
+     raw glyph paint step, so it correctly stacks behind the gradient
+     text. No red -- one shadow, offset by --shade-dx/dy (inherited from
+     .title-plate, already computed pointing away from the lamp) scaled
+     down for text, so it falls on the same far side as every card's
+     shadow. Alpha is --flick-reactive so it hardens/softens with the
+     bulb instead of sitting there as a flat constant. */
+  filter:drop-shadow(calc(var(--shade-dx,8px) * .55) calc(var(--shade-dy,8px) * .55) 1px rgba(23,20,15, calc(.25 + .5 * var(--lamp-lit,0) * var(--flick))));
+}
+h1 .amp{
+  background-image:linear-gradient(var(--lamp-ang,145deg),
+    color-mix(in srgb, var(--ochre), rgb(90,58,16) calc(65% * var(--lamp-lit,0) * var(--flick))) 0%,
+    color-mix(in srgb, var(--ochre), rgb(255,226,140) calc(95% * var(--lamp-lit,0) * var(--flick))) 100%);
+  background-clip:text; -webkit-background-clip:text;
+  color:transparent; -webkit-text-fill-color:transparent;
+  filter:drop-shadow(calc(var(--shade-dx,8px) * .5) calc(var(--shade-dy,8px) * .5) 1px rgba(23,20,15, calc(.3 + .55 * var(--lamp-lit,0) * var(--flick))));
+}
+.subtitle{
+  font-family:var(--font-serif); font-style:italic; font-weight:600; font-size:.95rem;
+  margin:9px 0 0; color:var(--ink); position:relative; max-width:62ch;
+}
+
+/* status rail */
+.status-rail{display:flex; flex-direction:column; gap:var(--gutter); min-width:214px}
+.stat{
+  --card-shadow:var(--shadow-panel);
+  /* .stat is small (a short, wide strip), so the same alpha values used
+     on the bigger cards read as barely-there here -- boosted fill-wash
+     and border-bright so the gradient is actually visible across such
+     a short span. */
+  background-image:
+    linear-gradient(var(--lamp-ang,145deg), transparent 0%, rgba(255,248,225, calc(.85 * var(--lamp-lit,0) * var(--flick))) 100%),
+    /* The fill wash above only ever brightens -- and this fill's base
+       colour (--news) is ALREADY pale cream, so "cream plus a warm
+       near-white wash" is two colours that are almost the same
+       lightness. No alpha fixes that; it needs a genuine dark
+       counter-wash on the far side too (same trick as the header's
+       border), or the fill just looks flat regardless of intensity. */
+    linear-gradient(calc(var(--lamp-ang,145deg) + 180deg), transparent 0%, rgba(40,32,22, calc(.5 * var(--lamp-lit,0) * var(--flick))) 100%),
+    linear-gradient(var(--news), var(--news)),
+    linear-gradient(var(--lamp-ang,145deg), transparent 0%, rgba(255,250,230, calc(1.5 * var(--lamp-lit,0) * var(--flick))) 100%),
+    linear-gradient(var(--ink), var(--ink));
+  background-origin:padding-box, padding-box, padding-box, border-box, border-box;
+  background-clip:padding-box, padding-box, padding-box, border-box, border-box;
+  border:var(--frame); border-color:transparent;
+  /* Shadow was a low-alpha grey wash with a wide (10px) blur, which on
+     a box this small just smeared over the thin border and read as one
+     indistinct smudge instead of two separate things. Tighter blur
+     (keeps it hugging the edge instead of spreading across the whole
+     box) and much higher alpha (a real dark shadow, not a grey tint)
+     so it's visually distinct from the border next to it. */
+  box-shadow:
+    inset var(--shade-dx,8px) var(--shade-dy,8px) 6px rgba(0,0,0, calc(.8 * var(--lamp-lit,0) * var(--flick))),
+    var(--card-shadow);
+  padding:9px 13px; display:flex; align-items:baseline; justify-content:space-between; gap:10px;
+}
+.stat .lbl{font-family:var(--font-tech); font-size:.6rem; letter-spacing:.2em; text-transform:uppercase; color:var(--ink-3)}
+.stat .val{font-family:var(--font-display); font-size:1.7rem; line-height:1; color:var(--ink)}
+.stat.alarm .val{color:var(--verm)}
+.rail-btns{display:flex; gap:9px; flex-wrap:wrap}
+
+/* ---------- buttons ---------- */
+.btn{
+  font-family:var(--font-display); text-transform:uppercase; letter-spacing:.055em;
+  font-size:.95rem; padding:9px 16px 8px; cursor:pointer;
+  background:var(--ochre); color:var(--ink); border:3px solid var(--ink);
+  /* will-change:transform promotes this to its own compositor layer.
+     Without it, :hover changing transform+box-shadow together on an
+     unpromoted element can force the whole document to re-rasterize
+     at a shifted sub-pixel offset on alternating frames while actively
+     hovered -- a real, reproducible whole-page flicker, confirmed via
+     a headless-Chrome pixel-diff harness against this exact pattern. */
+  box-shadow:4px 4px 0 var(--ink); transition:transform .1s ease, box-shadow .1s ease, background .15s;
+  will-change:transform;
+}
+.btn:hover{background:#f0b731; transform:translate(-1px,-1px); box-shadow:5px 5px 0 var(--ink)}
+.btn:active{transform:translate(3px,3px); box-shadow:1px 1px 0 var(--ink)}
+.btn:focus-visible{outline:3px solid var(--cyan); outline-offset:3px}
+.btn.ghost{background:transparent; color:var(--news); border-color:var(--news); box-shadow:4px 4px 0 rgba(0,0,0,.6)}
+.btn.ghost:hover{background:var(--news); color:var(--ink)}
+.btn.verm{background:var(--verm); color:var(--news)}
+.btn.verm:hover{background:#e4543f}
+.btn.cyan{background:var(--cyan); color:var(--ink)}
+.btn.sm{font-size:.76rem; padding:6px 11px 5px; box-shadow:3px 3px 0 var(--ink)}
+.btn[disabled]{opacity:.42; cursor:not-allowed; filter:grayscale(.6)}
+.btn[disabled]:hover{transform:none; box-shadow:4px 4px 0 var(--ink); background:var(--ochre)}
+
+/* ---------- main stage ---------- */
+.stage{display:grid; grid-template-columns:minmax(0,1fr) 286px; gap:var(--gutter); align-items:start}
+
+/* the studio drawn as an asymmetric comic page */
+.room{display:grid; grid-template-columns:repeat(6,1fr); gap:var(--gutter)}
+.artifact{
+  grid-column:span 2; min-height:190px; cursor:pointer; padding:0; overflow:hidden;
+  display:flex; flex-direction:column; text-align:left;
+  font-family:inherit; color:var(--ink);
+  background-image:
+    linear-gradient(var(--lamp-ang,145deg), transparent 0%, rgba(255,248,225, calc(.5 * var(--lamp-lit,0) * var(--flick))) 100%),
+    linear-gradient(var(--news), var(--news)),
+    linear-gradient(var(--lamp-ang,145deg), transparent 0%, rgba(255,250,230, calc(1.3 * var(--lamp-lit,0) * var(--flick))) 100%),
+    linear-gradient(var(--ink), var(--ink));
+  background-origin:padding-box, padding-box, border-box, border-box;
+  background-clip:padding-box, padding-box, border-box, border-box;
+  border:var(--frame); border-color:transparent;
+  --card-shadow:var(--shadow-panel);
+  box-shadow:var(--card-shadow);
+  transition:transform .14s ease, box-shadow .14s ease;
+  /* will-change:transform promotes this to its own compositor layer.
+     Without it, :hover changing transform+box-shadow together on an
+     unpromoted element can force the whole document to re-rasterize
+     at a shifted sub-pixel offset on alternating frames while actively
+     hovered -- a real, reproducible whole-page flicker, confirmed via
+     a headless-Chrome pixel-diff harness against this exact pattern.
+     (It also happens to make .artifact the containing block for its
+     position:absolute children -- .cap/.stamp/.chain below all rely
+     on that, same as an explicit position:relative would provide.) */
+  will-change:transform;
+  position:relative;
+}
+/* The card's own inset shadow (above) is invisible in practice: .art
+   and .cap together opaquely cover the entire padding-box, and
+   box-shadow paints underneath an element's children. This ::after
+   sits ABOVE the unpositioned .art artwork but BELOW .cap (z-index:2,
+   the caption strip's own title text) so the shadow doesn't paint over
+   readable text -- same fix already applied to .door-splash::after.
+   Also tightened the blur (13px -> 8px) so it hugs the border like a
+   crisp cast edge instead of a soft cloud drifting across the middle
+   of the card, where the artwork lives. Kept below .stamp (3) and
+   .chain (4) so those state badges stay unshadowed. */
+.artifact::after{
+  content:""; position:absolute; inset:0; z-index:1; pointer-events:none;
+  box-shadow:inset var(--shade-dx,8px) var(--shade-dy,8px) 8px rgba(0,0,0, calc(.5 * var(--lamp-lit,0) * var(--flick)));
+}
+.artifact:nth-child(1){grid-column:span 3}
+.artifact:nth-child(2){grid-column:span 3}
+.artifact:nth-child(3){grid-column:span 2}
+.artifact:nth-child(4){grid-column:span 2; transform:rotate(.45deg)}
+.artifact:nth-child(5){grid-column:span 2}
+.artifact:nth-child(6){grid-column:span 3; transform:rotate(-.35deg)}
+.artifact:nth-child(7){grid-column:span 3}
+.artifact:nth-child(8){grid-column:span 2}
+.artifact:nth-child(9){grid-column:span 4}
+.artifact:hover{transform:translate(-2px,-3px) rotate(0deg); --card-shadow:14px 14px 0 rgba(0,0,0,.6)}
+.artifact:focus-visible{outline:4px solid var(--cyan); outline-offset:3px}
+.artifact .art{flex:1; display:block; width:100%; height:auto; background:var(--news-2)}
+.artifact .cap{
+  border-top:4px solid var(--ink); padding:7px 11px 8px; background:var(--news);
+  display:flex; align-items:center; gap:9px; position:relative; z-index:2;
+}
+.artifact .no{
+  font-family:var(--font-display); font-size:1.5rem; line-height:1; color:var(--news);
+  background:var(--ink); padding:4px 8px 3px; flex:none;
+}
+.artifact .nm{font-family:var(--font-display); font-size:1.02rem; text-transform:uppercase; letter-spacing:.02em; line-height:1.05}
+.artifact .tag{font-family:var(--font-tech); font-size:.58rem; letter-spacing:.14em; text-transform:uppercase; color:var(--ink-3); display:block; margin-top:2px}
+.artifact[data-solved="1"]{--card-shadow:10px 10px 0 rgba(111,143,74,.55)}
+.artifact[data-solved="1"] .no{background:var(--moss)}
+.artifact[data-solved="1"] .art{filter:saturate(.55) brightness(1.04)}
+.artifact .stamp{
+  position:absolute; top:11px; right:9px; z-index:3;
+  font-family:var(--font-display); text-transform:uppercase; font-size:1.02rem;
+  color:var(--moss); border:3px solid var(--moss); padding:2px 8px 1px;
+  transform:rotate(-11deg); background:rgba(241,227,200,.82); letter-spacing:.06em;
+}
+.artifact .chain{
+  position:absolute; inset:0; z-index:4; background:rgba(23,20,15,.72);
+  display:flex; align-items:center; justify-content:center; text-align:center; padding:16px;
+  font-family:var(--font-display); text-transform:uppercase; color:var(--news-3);
+  font-size:.92rem; letter-spacing:.05em; line-height:1.25;
+}
+.artifact .chain svg{display:block; margin:0 auto 7px}
+
+/* ---------- codex ---------- */
+.codex{
+  --card-shadow:var(--shadow-panel);
+  background-image:
+    linear-gradient(var(--lamp-ang,145deg), transparent 0%, rgba(255,248,225, calc(.5 * var(--lamp-lit,0) * var(--flick))) 100%),
+    linear-gradient(var(--ink-2), var(--ink-2)),
+    linear-gradient(var(--lamp-ang,145deg), transparent 0%, rgba(255,250,230, calc(1.25 * var(--lamp-lit,0) * var(--flick))) 100%),
+    linear-gradient(var(--news-3), var(--news-3));
+  background-origin:padding-box, padding-box, border-box, border-box;
+  background-clip:padding-box, padding-box, border-box, border-box;
+  border:var(--frame); border-color:transparent;
+  /* No inset shadow here on purpose: on a dark panel (--ink-2), a dark
+     blurry inset lands on the same lamp-facing corner as the fill
+     gradient's bright stop and the two just cancel into flat grey
+     haze that spreads right through the heading text -- it reads as
+     depth on the cream cards, but as mud here. The border+fill
+     gradient alone already carries the lit/dim read for this panel. */
+  box-shadow:var(--card-shadow);
+  padding:13px; position:sticky; top:18px;
+}
+.codex h2{
+  font-family:var(--font-display); text-transform:uppercase; font-size:1.18rem; margin:0 0 3px;
+  color:var(--ochre); letter-spacing:.02em; line-height:1.05;
+}
+.codex .hint-line{font-family:var(--font-tech); font-size:.6rem; letter-spacing:.14em; text-transform:uppercase; color:var(--news-3); margin:0 0 11px}
+.codex ol{list-style:none; margin:0; padding:0; display:flex; flex-direction:column; gap:5px}
+.codex li{display:grid; grid-template-columns:22px 1fr; gap:8px; align-items:center; font-family:var(--font-tech); font-size:.76rem}
+.codex li .i{color:var(--cyan); text-align:right}
+.codex li .slot{
+  border-bottom:2px dashed var(--ink-3); padding:3px 5px 2px; letter-spacing:.14em;
+  text-transform:uppercase; color:var(--news-3); min-height:1.5em; font-size:.72rem;
+}
+.codex li.done .slot{border-bottom:2px solid var(--moss); color:var(--ochre); font-weight:700}
+.codex .bar{height:9px; border:2px solid var(--news-3); margin-top:13px; background:var(--ink)}
+.codex .bar i{display:block; height:100%; width:0; background:var(--moss); transition:width .45s ease}
+.codex .meta{font-family:var(--font-tech); font-size:.62rem; color:var(--news-3); margin-top:8px; line-height:1.55}
+
+/* ---------- modal ---------- */
+.veil{
+  position:fixed; inset:0; z-index:60; background:rgba(20, 16, 11, 0.9);
+  display:none; overflow-y:auto; padding:0 14px 60px;
+}
+.veil.open{display:block; animation:veilIn .2s ease}
+@keyframes veilIn{from{opacity:0}to{opacity:1}}
+.sheet{
+  /* The 22px top spacing used to be .veil's own padding-top, but
+     position:sticky's "top:0" offset is measured from the SCROLL
+     CONTAINER's padding edge -- so .sheet-hd was sticking at y=22, not
+     y=0, leaving a permanent 22px gap at the very top of the viewport
+     where already-scrolled .sheet-bd content (normal flow, nothing
+     covering it there) stayed visible above the sticky header. Moving
+     that same spacing onto .sheet's own margin keeps the identical
+     resting look (still 22px of backdrop above the sheet before any
+     scrolling) but leaves .veil's padding-top at 0, so the sticky
+     header now correctly pins flush to the true top once scrolled. */
+  max-width:940px; margin:22px auto 0; background:var(--news); color:var(--ink);
+  border:6px solid var(--ink); box-shadow:0 26px 70px rgba(0,0,0,.8);
+  animation:sheetIn .26s cubic-bezier(.2,.9,.3,1.2); position:relative;
+}
+@keyframes sheetIn{from{opacity:0; transform:translateY(22px) scale(.985)}to{opacity:1; transform:none}}
+.sheet-hd{
+  background:var(--ink); color:var(--news); padding:13px 18px;
+  display:flex; align-items:flex-start; gap:14px; justify-content:space-between;
+  position:sticky; top:0; z-index:9;
+}
+.sheet-hd .t{font-family:var(--font-display); text-transform:uppercase; font-size:1.55rem; line-height:1; margin:0}
+.sheet-hd .t small{display:block; font-family:var(--font-tech); font-size:.6rem; letter-spacing:.24em; color:var(--cyan); margin-bottom:5px; text-transform:uppercase}
+.x{
+  background:var(--verm); color:var(--news); border:3px solid var(--news); cursor:pointer;
+  font-family:var(--font-display); font-size:1.15rem; line-height:1; padding:5px 11px 6px; flex:none;
+}
+.x:hover{background:var(--news); color:var(--verm); border-color:var(--verm)}
+.sheet-bd{padding:20px 22px 26px}
+
+/* briefing caption box — the PDF's "caption" element, used as UI furniture */
+.caption-box{
+  background:var(--news-2); border:3px solid var(--ink); padding:11px 14px; margin:0 0 18px;
+  font-family:var(--font-serif); font-size:.94rem; line-height:1.6;
+}
+.caption-box b{font-family:var(--font-body); font-weight:700}
+.caption-box .lead{
+  font-family:var(--font-tech); font-size:.58rem; letter-spacing:.22em; text-transform:uppercase;
+  color:var(--cyan-dim); display:block; margin-bottom:5px;
+}
+.steps{margin:0; padding-left:1.25rem; font-size:.88rem; line-height:1.6}
+.steps li{margin-bottom:3px}
+
+h3.blk{
+  font-family:var(--font-display); text-transform:uppercase; font-size:1.05rem; letter-spacing:.03em;
+  margin:22px 0 10px; padding-bottom:4px; border-bottom:3px solid var(--ink); line-height:1.1;
+}
+h3.blk:first-child{margin-top:0}
+
+/* answer bar */
+.answer-bar{
+  margin-top:22px; border:4px solid var(--ink); background:var(--ink); color:var(--news);
+  padding:13px 15px; display:grid; grid-template-columns:1fr auto auto; gap:11px; align-items:end;
+}
+.answer-bar label{font-family:var(--font-tech); font-size:.6rem; letter-spacing:.2em; text-transform:uppercase; color:var(--cyan); display:block; margin-bottom:5px}
+.answer-bar input{
+  width:100%; font-family:var(--font-display); font-size:1.5rem; text-transform:uppercase;
+  letter-spacing:.14em; padding:6px 10px; background:var(--news); color:var(--ink);
+  border:3px solid var(--news-3); min-width:0;
+}
+.answer-bar input:focus{outline:none; border-color:var(--ochre)}
+.verdict{
+  grid-column:1/-1; font-family:var(--font-tech); font-size:.78rem; min-height:1.3em;
+  letter-spacing:.04em; margin-top:2px;
+}
+.verdict.bad{color:var(--verm)}
+.verdict.good{color:var(--ochre)}
+.shake{animation:shake .34s}
+@keyframes shake{0%,100%{transform:none}20%{transform:translateX(-7px)}40%{transform:translateX(6px)}60%{transform:translateX(-4px)}80%{transform:translateX(3px)}}
+
+.hint-out{
+  margin-top:11px; border-left:6px solid var(--cyan); background:rgba(47,159,208,.13);
+  padding:9px 13px; font-size:.86rem; display:none;
+}
+.hint-out.show{display:block}
+.hint-out p{margin:0 0 5px}
+.hint-out p:last-child{margin:0}
+.hint-out b{font-family:var(--font-tech); font-size:.62rem; letter-spacing:.18em; text-transform:uppercase; color:var(--cyan-dim); display:block}
+
+.solved-note{
+  border:4px double var(--moss); background:rgba(111,143,74,.14); padding:13px 15px; margin-top:18px;
+  font-family:var(--font-tech); font-size:.82rem; line-height:1.6;
+}
+.solved-note strong{font-family:var(--font-display); font-size:1.3rem; letter-spacing:.14em; display:block; color:#3d5426}
+
+/* ============ PUZZLE 1 — ink-trail maze ============ */
+.maze-wrap{display:flex; flex-wrap:wrap; gap:20px; align-items:flex-start}
+.maze{
+  display:grid; grid-template-columns:repeat(7,minmax(34px,52px)); gap:3px;
+  background:var(--ink); padding:3px; border:4px solid var(--ink); flex:none;
+}
+.cell{
+  aspect-ratio:1; border:none; cursor:default; position:relative; padding:0;
+  display:flex; align-items:center; justify-content:center;
+  font-family:var(--font-display); font-size:1.15rem; color:var(--ink);
+  background:var(--news-2);
+}
+.cell.blocked{background:var(--ink-2); cursor:not-allowed}
+.cell.blocked::before{
+  content:""; position:absolute; inset:4px;
+  background:
+    linear-gradient(135deg, transparent 46%, rgba(241,227,200,.22) 46% 54%, transparent 54%),
+    radial-gradient(rgba(241,227,200,.2) .8px, transparent 1px);
+  background-size:100% 100%, 5px 5px;
+  border:2px solid rgba(241,227,200,.26);
+}
+.cell.gutter{cursor:pointer}
+.cell.gutter:hover:not(.on){background:#fff5df; box-shadow:inset 0 0 0 3px var(--cyan)}
+.cell.on{background:var(--cyan); color:var(--news)}
+.cell.on.lettered{background:var(--ochre); color:var(--ink)}
+.cell.head{box-shadow:inset 0 0 0 4px var(--verm)}
+.cell .flag{
+  position:absolute; top:1px; left:3px; font-family:var(--font-tech); font-size:.44rem;
+  letter-spacing:.08em; color:var(--verm); text-transform:uppercase; font-weight:700;
+}
+.trail{
+  font-family:var(--font-display); font-size:1.9rem; letter-spacing:.3em; min-height:1.3em;
+  background:var(--ink); color:var(--ochre); padding:8px 14px; border:4px solid var(--ink);
+  word-break:break-all;
+}
+.maze-side{flex:1; min-width:210px}
+
+/* ============ PUZZLE 2 — homophone strips + cipher wheel ============ */
+.strip{
+  border:3px solid var(--ink); background:var(--news); padding:9px 12px; margin-bottom:9px;
+  box-shadow:5px 5px 0 rgba(23,20,15,.28); font-size:.92rem; line-height:1.9;
+}
+.strip:nth-child(even){margin-left:clamp(0px,4vw,52px)}
+.strip .sn{
+  font-family:var(--font-display); font-size:1.15rem; background:var(--ink); color:var(--news);
+  padding:1px 7px; margin-right:8px;
+}
+.hchoice{display:inline-flex; vertical-align:middle; margin:0 3px; border:2px solid var(--ink)}
+.hchoice button{
+  font-family:var(--font-body); font-weight:700; font-size:.88rem; cursor:pointer;
+  background:var(--news-2); color:var(--ink); border:none; padding:4px 9px 3px;
+  position:relative; border-right:2px solid var(--ink);
+}
+.hchoice button:last-child{border-right:none}
+.hchoice button .num{
+  display:block; font-family:var(--font-tech); font-size:.56rem; color:var(--moss);
+  letter-spacing:.06em; line-height:1;
+}
+.hchoice button:hover{background:#fff7e4}
+.hchoice button.sel{background:var(--moss); color:var(--news)}
+.hchoice button.sel .num{color:var(--news)}
+.hchoice button.wrong{background:var(--verm); color:var(--news)}
+
+.wheel-row{display:flex; flex-wrap:wrap; gap:20px; align-items:flex-start; margin-top:6px}
+.wheel-box{flex:none; text-align:center}
+.wheel-ctl{display:flex; gap:7px; justify-content:center; align-items:center; margin-top:9px}
+.wheel-ctl .deg{font-family:var(--font-tech); font-size:.68rem; min-width:112px; color:var(--ink-3)}
+.decoder{flex:1; min-width:230px}
+.numstrip{display:flex; flex-wrap:wrap; gap:6px; margin-bottom:11px}
+.numstrip .nb{
+  border:3px solid var(--ink); background:var(--news-2); min-width:42px; text-align:center;
+  font-family:var(--font-tech); font-size:.7rem; padding:3px 4px;
+}
+.numstrip .nb b{display:block; font-family:var(--font-display); font-size:1.4rem; line-height:1; color:var(--cyan-dim)}
+.numstrip .nb.filled b{color:var(--ink)}
+.numstrip .nb .out{
+  display:block; font-family:var(--font-display); font-size:1.25rem; line-height:1.1;
+  border-top:2px solid var(--ink); margin-top:3px; color:var(--verm); min-height:1.25em;
+}
+
+/* ============ PUZZLE 3 — riddle slate (type slugs) ============ */
+.slug-pool{display:flex; flex-wrap:wrap; gap:9px; margin-bottom:16px}
+.slug{
+  font-family:var(--font-serif); font-size:.92rem; cursor:pointer; padding:8px 11px;
+  background:linear-gradient(180deg,#d8d2c4,#b2ab99); color:var(--ink);
+  border:3px solid var(--ink); box-shadow:4px 4px 0 rgba(23,20,15,.4);
+  transition:transform .1s;
+}
+.slug:hover{transform:translateY(-2px)}
+.slug.used{opacity:.22; cursor:not-allowed; transform:none}
+.slate{
+  background:var(--ink-2); border:6px solid var(--ink); padding:12px; min-height:112px;
+  display:flex; flex-wrap:wrap; gap:8px; align-content:flex-start;
+}
+.slate .placed{
+  font-family:var(--font-serif); font-size:.92rem; padding:7px 10px; cursor:pointer;
+  background:var(--news); color:var(--ink); border:3px solid var(--news-3);
+}
+.slate .placed:hover{border-color:var(--verm)}
+.slate .ghost{font-family:var(--font-tech); font-size:.72rem; color:var(--news-3); letter-spacing:.14em}
+.riddle-read{
+  font-family:var(--font-serif); font-size:1.12rem; line-height:1.75; font-style:italic;
+  border-left:6px solid var(--verm); padding:11px 16px; background:var(--news-2); margin-top:16px; display:none;
+}
+.riddle-read.show{display:block}
+
+/* ============ PUZZLE 4 — rebus cards ============ */
+.rebus-grid{display:grid; grid-template-columns:repeat(auto-fit,minmax(252px,1fr)); gap:16px}
+.rcard{border:4px solid var(--ink); background:var(--news); box-shadow:6px 6px 0 rgba(23,20,15,.35)}
+.rcard .rhd{
+  background:var(--ink); color:var(--news); font-family:var(--font-display); text-transform:uppercase;
+  font-size:.92rem; padding:5px 10px 4px; display:flex; justify-content:space-between; align-items:center;
+}
+.rcard .rhd span{font-family:var(--font-tech); font-size:.56rem; letter-spacing:.16em; color:var(--cyan)}
+.rcard .rart{display:flex; align-items:center; justify-content:center; gap:7px; padding:12px 10px; background:var(--news-2); min-height:104px; flex-wrap:wrap}
+.rcard .rart svg{display:block}
+.rcard .op{font-family:var(--font-display); font-size:1.3rem; color:var(--verm)}
+.rcard .mathline{font-family:var(--font-tech); font-size:.74rem; text-align:center; padding:5px 8px; border-top:3px solid var(--ink); background:var(--news); letter-spacing:.05em}
+.rcard .boxes{display:flex; gap:2px; padding:9px; flex-wrap:wrap; justify-content:center; background:var(--news)}
+.lbox{
+  width:23px; height:29px; border:2px solid var(--ink); display:flex; align-items:center; justify-content:center;
+  font-family:var(--font-display); font-size:1.05rem; background:#fff; color:var(--ink);
+}
+.lbox.key{background:var(--ochre)}
+.lbox.dead{background:var(--news-3); border-style:dashed}
+.rcard input.word{
+  width:calc(100% - 18px); margin:0 9px 10px; font-family:var(--font-tech); text-transform:uppercase;
+  letter-spacing:.14em; font-size:.88rem; padding:5px 8px; border:3px solid var(--ink-3); background:#fff;
+}
+.rcard input.word:focus{outline:none; border-color:var(--cyan)}
+.rcard[data-ok="1"]{box-shadow:6px 6px 0 rgba(111,143,74,.5)}
+.rcard[data-ok="1"] input.word{border-color:var(--moss); background:rgba(111,143,74,.12)}
+.keystrip{
+  display:flex; gap:5px; flex-wrap:wrap; align-items:center; margin-top:18px;
+  border:4px solid var(--ink); background:var(--ink); padding:11px 13px;
+}
+.keystrip .kl{font-family:var(--font-tech); font-size:.6rem; letter-spacing:.2em; text-transform:uppercase; color:var(--cyan); margin-right:6px}
+
+/* ============ PUZZLE 5 — blue-line drafting board ============ */
+.board-tools{display:flex; flex-wrap:wrap; gap:9px; margin-bottom:14px}
+.toggle{
+  font-family:var(--font-tech); font-size:.68rem; letter-spacing:.1em; text-transform:uppercase;
+  cursor:pointer; padding:7px 12px; border:3px solid var(--ink); background:var(--news-2); color:var(--ink);
+  display:inline-flex; gap:8px; align-items:center;
+}
+.toggle i{width:11px; height:11px; border:2px solid var(--ink); background:var(--news); display:block}
+.toggle.on{background:var(--ink); color:var(--news)}
+.toggle.on i{background:var(--cyan); border-color:var(--news)}
+.dboard{
+  display:grid; grid-template-columns:repeat(6,1fr); gap:0; border:5px solid var(--ink);
+  background:#eef3f6; max-width:430px; position:relative;
+}
+.dboard.screened{background-image:radial-gradient(rgba(47,159,208,.3) 1px, transparent 1.3px); background-size:6px 6px}
+.dcell{
+  aspect-ratio:1; display:flex; align-items:center; justify-content:center; position:relative;
+  font-family:var(--font-display); font-size:1.32rem; border-right:1px solid rgba(47,159,208,.5);
+  border-bottom:1px solid rgba(47,159,208,.5);
+}
+.dcell.blue{color:var(--cyan)}
+.dcell.black{color:var(--ink)}
+.dboard.nonrepro .dcell.blue{color:transparent}
+.dcell .gn{
+  position:absolute; top:1px; left:3px; font-family:var(--font-tech); font-size:.52rem;
+  color:var(--cyan-dim); opacity:0; transition:opacity .2s; font-weight:700;
+}
+.dboard.guides .dcell .gn{opacity:1}
+.dboard.guides .dcell.black{box-shadow:inset 0 0 0 3px var(--verm)}
+
+/* ============ PUZZLE 6 — proofing galley ============ */
+.galley{
+  font-family:var(--font-serif); font-size:1.03rem; line-height:2.05; background:var(--news);
+  border:4px solid var(--ink); padding:15px 18px; box-shadow:6px 6px 0 rgba(23,20,15,.3);
+}
+.galley .w{cursor:pointer; padding:1px 2px; border-radius:2px; transition:background .12s}
+.galley .w:hover{background:rgba(47,159,208,.25)}
+.galley .w.flagged{background:var(--verm); color:var(--news); text-decoration:line-through}
+.galley .w.missed{background:rgba(214,64,44,.28)}
+.fixrow{display:grid; grid-template-columns:150px 1fr; gap:11px; align-items:center; margin-bottom:9px}
+.fixrow .bad{font-family:var(--font-serif); font-style:italic; text-decoration:line-through wavy var(--verm); font-size:.94rem}
+.fixrow .fixin{display:flex; gap:9px; align-items:center; flex-wrap:wrap}
+.fixrow input{
+  font-family:var(--font-tech); text-transform:uppercase; letter-spacing:.1em; font-size:.84rem;
+  padding:5px 8px; border:3px solid var(--ink-3); background:#fff; width:190px;
+}
+.fixrow input:focus{outline:none; border-color:var(--cyan)}
+.fixrow[data-ok="1"] input{border-color:var(--moss); background:rgba(111,143,74,.12)}
+.fixrow .boxes{display:flex; gap:2px; flex-wrap:wrap}
+.strikes{font-family:var(--font-tech); font-size:.72rem; color:var(--verm); letter-spacing:.1em}
+
+/* ============ PUZZLE 7 — lens rack ============ */
+.lens-pool{display:grid; grid-template-columns:repeat(auto-fit,minmax(118px,1fr)); gap:11px; margin-bottom:16px}
+.lens{
+  border:4px solid var(--ink); background:var(--news); cursor:pointer; padding:0; overflow:hidden;
+  box-shadow:5px 5px 0 rgba(23,20,15,.32); transition:transform .12s;
+}
+.lens:hover{transform:translateY(-3px)}
+.lens.used{opacity:.2; cursor:not-allowed; transform:none}
+.lens svg{display:block; width:100%; height:auto; background:var(--news-2)}
+.lens .ll{font-family:var(--font-tech); font-size:.56rem; letter-spacing:.09em; text-transform:uppercase; padding:4px 5px; border-top:3px solid var(--ink); text-align:center; line-height:1.25}
+.rack{
+  display:grid; grid-template-columns:repeat(7,1fr); gap:7px; border:5px solid var(--ink);
+  background:var(--ink-2); padding:9px;
+}
+.rack .bay{
+  aspect-ratio:3/4; border:3px dashed var(--news-3); display:flex; flex-direction:column;
+  align-items:center; justify-content:center; cursor:pointer; overflow:hidden; background:rgba(241,227,200,.05);
+}
+.rack .bay .bn{font-family:var(--font-display); font-size:1.15rem; color:var(--news-3)}
+.rack .bay.full{border:3px solid var(--news); background:var(--news); padding:0}
+.rack .bay.full svg{width:100%; height:auto; display:block}
+.rack .bay.full .bl{font-family:var(--font-display); font-size:1rem; color:var(--ink); line-height:1}
+
+/* ============ PUZZLE 8 — paint rack + balloons ============ */
+.mood-tbl{width:100%; border-collapse:collapse; font-size:.9rem}
+.mood-tbl th{
+  font-family:var(--font-tech); font-size:.58rem; letter-spacing:.18em; text-transform:uppercase;
+  text-align:left; background:var(--ink); color:var(--news); padding:6px 9px;
+}
+.mood-tbl td{border:2px solid var(--ink-3); padding:7px 9px; vertical-align:middle}
+.mood-tbl tr:nth-child(even) td{background:var(--news-2)}
+.mood-tbl select{
+  font-family:var(--font-tech); font-size:.78rem; padding:5px 7px; border:3px solid var(--ink-3);
+  background:#fff; color:var(--ink); text-transform:uppercase; width:100%; max-width:180px;
+}
+.mood-tbl .lt{font-family:var(--font-display); font-size:1.5rem; text-align:center; width:48px; color:var(--news-3)}
+.mood-tbl tr[data-ok="1"] .lt{color:var(--ink)}
+.mood-tbl tr[data-ok="1"] select{border-color:var(--moss); background:rgba(111,143,74,.12)}
+.tube-rack{display:flex; flex-wrap:wrap; gap:9px; margin:4px 0 18px}
+.tube{width:60px; text-align:center; font-family:var(--font-tech); font-size:.52rem; letter-spacing:.06em; text-transform:uppercase}
+.tube svg{display:block; margin:0 auto}
+.balloon-grid{display:grid; grid-template-columns:repeat(auto-fit,minmax(168px,1fr)); gap:13px}
+.bcard{border:4px solid var(--ink); background:var(--news-2); padding:9px; text-align:center}
+.bcard svg{display:block; margin:0 auto 7px}
+.bcard select{font-family:var(--font-tech); font-size:.74rem; padding:4px 6px; border:3px solid var(--ink-3); background:#fff; width:100%; text-transform:uppercase}
+.bcard[data-ok="1"]{border-color:var(--moss)}
+.bcard[data-ok="1"] select{border-color:var(--moss); background:rgba(111,143,74,.12)}
+
+/* ============ PUZZLE 9 — cryptex ============ */
+.cryptex{
+  display:flex; gap:10px; justify-content:center; flex-wrap:wrap; padding:20px 14px;
+  background:linear-gradient(180deg,#3a3126,#241d15 40%,#4a3f2f); border:6px solid var(--ink);
+  box-shadow:inset 0 0 40px rgba(0,0,0,.7);
+}
+.rotor{width:78px; text-align:center}
+.rotor .plq{
+  font-family:var(--font-tech); font-size:.5rem; letter-spacing:.06em; text-transform:uppercase;
+  color:var(--ochre); line-height:1.35; min-height:3.4em; margin-bottom:6px;
+}
+.rotor .drum{
+  background:linear-gradient(90deg,#8a7449,#e0c98c 30%,#f2e4bd 50%,#d9c184 70%,#7d6840);
+  border:4px solid var(--ink); padding:3px 0; box-shadow:inset 0 3px 9px rgba(0,0,0,.45);
+}
+.rotor .drum .win{
+  font-family:var(--font-display); font-size:2.15rem; line-height:1.15; color:var(--ink);
+  border-top:2px solid rgba(23,20,15,.3); border-bottom:2px solid rgba(23,20,15,.3);
+  background:rgba(255,255,255,.35);
+}
+.rotor .drum .pk{font-family:var(--font-display); font-size:.95rem; color:rgba(23,20,15,.42); line-height:1.1}
+.rotor .rb{display:flex; gap:4px; justify-content:center; margin-top:6px}
+.rotor .rb button{
+  font-family:var(--font-display); font-size:.85rem; cursor:pointer; background:var(--ochre);
+  color:var(--ink); border:3px solid var(--ink); padding:2px 8px 1px; line-height:1.2;
+}
+.rotor .rb button:hover{background:#f0b731}
+.cryptex[data-open="1"] .rotor .drum{background:linear-gradient(90deg,#4e6b32,#9dbd6f 40%,#c9e0a3 50%,#8fae62 65%,#42592a)}
+
+/* ============ EXIT DOOR ============ */
+.door-splash{
+  --card-shadow:var(--shadow-panel);
+  margin-top:var(--gutter);
+  background-image:
+    linear-gradient(var(--lamp-ang,145deg), transparent 0%, rgba(255,248,225, calc(.5 * var(--lamp-lit,0) * var(--flick))) 100%),
+    linear-gradient(var(--news), var(--news)),
+    linear-gradient(var(--lamp-ang,145deg), transparent 0%, rgba(255,250,230, calc(1.25 * var(--lamp-lit,0) * var(--flick))) 100%),
+    linear-gradient(var(--ink), var(--ink));
+  background-origin:padding-box, padding-box, border-box, border-box;
+  background-clip:padding-box, padding-box, border-box, border-box;
+  border:var(--frame); border-color:transparent;
+  box-shadow:var(--card-shadow);
+  position:relative; overflow:hidden; display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1.05fr);
+}
+/* Same occlusion problem as .artifact: .dart (the door SVG) and .dbody
+   together opaquely cover the whole padding-box, hiding an inset
+   box-shadow set directly on .door-splash. This ::after paints above
+   both instead. */
+.door-splash::after{
+  /* z-index:1 -- above the unpositioned .dart SVG (which has no
+     z-index, so it sits at the base static level) but below .dbody
+     (z-index:2), so the shadow doesn't paint over the readable text.
+     Blur tightened (11px -> 7px) too: .dbody has no opaque background
+     of its own, so a wide blur would still bleed in visually behind
+     the letter shapes even though it's z-index-correct underneath. */
+  content:""; position:absolute; inset:0; z-index:1; pointer-events:none;
+  box-shadow:inset var(--shade-dx,8px) var(--shade-dy,8px) 7px rgba(0,0,0, calc(.45 * var(--lamp-lit,0) * var(--flick)));
+}
+.door-splash .dart{background:var(--ink-2); display:block; width:100%; height:100%}
+.door-splash .dbody{padding:20px 22px 24px; position:relative; z-index:2}
+.door-splash h2{
+  /* Pre-existing, unrelated to the lamp/shadow work: .door-splash never
+     set its own text colour, so this inherited body's cream --news
+     (confirmed via computed style: cream text on this panel's cream
+     fill). Noticed by coincidence while checking the new inset shadow,
+     not caused by it. */
+  color:var(--ink);
+  font-family:var(--font-display); text-transform:uppercase; font-size:clamp(1.5rem,3.4vw,2.35rem);
+  margin:0 0 3px; line-height:.98; letter-spacing:.01em;
+}
+.door-splash h2 span{color:var(--verm)}
+.door-splash .dsub{font-family:var(--font-tech); font-size:.62rem; letter-spacing:.2em; text-transform:uppercase; color:var(--cyan-dim); margin:0 0 12px}
+.dials{display:flex; gap:11px; flex-wrap:wrap; margin:14px 0}
+.dial{width:66px; text-align:center}
+.dial .dl{font-family:var(--font-tech); font-size:.5rem; letter-spacing:.08em; text-transform:uppercase; color:var(--ink-3); min-height:2.3em; line-height:1.3; margin-bottom:4px}
+.dial .face{
+  background:radial-gradient(circle at 34% 28%, #f0dfae, #b79a5c 70%, #7d6636);
+  border:4px solid var(--ink); border-radius:50%; aspect-ratio:1;
+  display:flex; align-items:center; justify-content:center;
+  font-family:var(--font-display); font-size:1.75rem; color:var(--ink);
+  box-shadow:inset 0 3px 8px rgba(0,0,0,.35);
+}
+.dial .db{display:flex; gap:4px; justify-content:center; margin-top:5px}
+.dial .db button{font-family:var(--font-display); cursor:pointer; background:var(--ink); color:var(--news); border:none; padding:2px 7px 1px; font-size:.8rem}
+.dial .db button:hover{background:var(--verm)}
+.door-locked-note{
+  font-family:var(--font-tech); font-size:.78rem; line-height:1.7; border:3px dashed var(--ink-3);
+  padding:11px 13px; background:var(--news-2);
+}
+
+/* ============ CERTIFICATE ============ */
+.cert-veil{position:fixed; inset:0; z-index:90; background:rgba(9,8,6,.95); display:none; overflow-y:auto; padding:26px 14px 70px}
+.cert-veil.open{display:block}
+.cert{
+  max-width:840px; margin:0 auto; background:var(--news); color:var(--ink);
+  border:14px double var(--ink); padding:34px 40px 30px; position:relative; text-align:center;
+  box-shadow:0 30px 80px rgba(0,0,0,.85);
+}
+.cert::before{
+  content:""; position:absolute; inset:9px; border:3px solid var(--verm); pointer-events:none;
+}
+.cert .seal{position:absolute; right:26px; bottom:22px; opacity:.95}
+.cert .ck{font-family:var(--font-tech); font-size:.62rem; letter-spacing:.3em; text-transform:uppercase; color:var(--cyan-dim); margin:0}
+.cert h2{
+  font-family:var(--font-display); text-transform:uppercase; font-size:clamp(1.8rem,5.4vw,3.1rem);
+  margin:7px 0 2px; line-height:.95; text-shadow:3px 3px 0 var(--ochre);
+}
+.cert .of{font-family:var(--font-serif); font-style:italic; font-size:1.02rem; margin:0 0 20px; color:var(--ink-3)}
+.cert .nameline{
+  font-family:var(--font-serif); font-size:clamp(1.5rem,4.4vw,2.35rem); border-bottom:4px solid var(--ink);
+  display:inline-block; min-width:min(430px,86%); padding:2px 18px 5px; margin-bottom:6px; font-weight:700;
+}
+.cert .nsub{font-family:var(--font-tech); font-size:.56rem; letter-spacing:.24em; text-transform:uppercase; color:var(--ink-3); margin:0 0 18px}
+.cert .body{font-family:var(--font-serif); font-size:1rem; line-height:1.75; max-width:60ch; margin:0 auto 20px}
+.cert-stats{display:grid; grid-template-columns:repeat(auto-fit,minmax(112px,1fr)); gap:11px; margin:0 0 20px; text-align:center}
+.cert-stats div{border:3px solid var(--ink); padding:7px 5px; background:var(--news-2)}
+.cert-stats .cs-l{font-family:var(--font-tech); font-size:.5rem; letter-spacing:.16em; text-transform:uppercase; color:var(--ink-3); display:block}
+.cert-stats .cs-v{font-family:var(--font-display); font-size:1.45rem; line-height:1.15}
+.cert-codex{
+  display:grid; grid-template-columns:repeat(auto-fit,minmax(104px,1fr)); gap:5px;
+  border-top:3px solid var(--ink); border-bottom:3px solid var(--ink); padding:12px 0; margin-bottom:18px;
+}
+.cert-codex span{font-family:var(--font-tech); font-size:.62rem; letter-spacing:.08em; text-transform:uppercase}
+.cert-codex span b{display:block; font-family:var(--font-display); font-size:1rem; letter-spacing:.06em; color:var(--verm)}
+.cert .sigrow{display:flex; gap:26px; justify-content:center; flex-wrap:wrap; margin-top:24px}
+.cert .sig{flex:1; min-width:180px; max-width:270px}
+.cert .sig .rule{border-bottom:2px solid var(--ink); height:30px}
+.cert .sig .sl{font-family:var(--font-tech); font-size:.54rem; letter-spacing:.16em; text-transform:uppercase; color:var(--ink-3); padding-top:4px}
+.cert-actions{max-width:840px; margin:18px auto 0; display:flex; gap:11px; justify-content:center; flex-wrap:wrap}
+.name-ask{max-width:520px; margin:0 auto; text-align:center}
+.name-ask input{
+  font-family:var(--font-serif); font-size:1.3rem; padding:9px 13px; width:100%;
+  border:4px solid var(--ink); background:var(--news); color:var(--ink); text-align:center;
+}
+.name-ask input:focus{outline:none; border-color:var(--verm)}
+
+/* ============ HANDBOOK ============ */
+.hb-grid{display:grid; grid-template-columns:repeat(auto-fit,minmax(276px,1fr)); gap:16px}
+.hb-card{border:4px solid var(--ink); background:var(--news); padding:0; overflow:hidden}
+.hb-card .hbh{background:var(--ink); color:var(--news); font-family:var(--font-display); text-transform:uppercase; padding:6px 11px 5px; font-size:1rem}
+.hb-card .hbb{padding:11px 13px; font-size:.86rem; line-height:1.6}
+.hb-card dl{margin:0}
+.hb-card dt{font-family:var(--font-display); text-transform:uppercase; font-size:.94rem; margin-top:9px; letter-spacing:.02em}
+.hb-card dt:first-child{margin-top:0}
+.hb-card dd{margin:1px 0 0; font-family:var(--font-serif); font-size:.9rem; line-height:1.55}
+.hb-fig{background:var(--news-2); border-top:3px solid var(--ink); border-bottom:3px solid var(--ink)}
+.hb-fig svg{display:block; width:100%; height:auto}
+.hb-cap{font-family:var(--font-tech); font-size:.56rem; letter-spacing:.11em; text-transform:uppercase; color:var(--ink-3); padding:6px 11px; line-height:1.5}
+.swatch-tbl{width:100%; border-collapse:collapse; font-size:.83rem}
+.swatch-tbl td{padding:4px 6px; border-bottom:1px solid var(--news-3); vertical-align:middle}
+.swatch-tbl td:first-child{width:26px}
+.swatch-tbl i{display:block; width:20px; height:20px; border:2px solid var(--ink)}
+.swatch-tbl b{font-family:var(--font-display); text-transform:uppercase; letter-spacing:.03em; font-weight:400}
+
+/* ============ TOAST ============ */
+.toast-stack{position:fixed; bottom:18px; left:50%; transform:translateX(-50%); z-index:120; display:flex; flex-direction:column; gap:8px; align-items:center; pointer-events:none; width:min(92vw,470px)}
+.toast{
+  background:var(--ink); color:var(--news); border:4px solid var(--ochre); padding:9px 15px;
+  font-family:var(--font-tech); font-size:.78rem; letter-spacing:.05em; box-shadow:6px 6px 0 rgba(0,0,0,.6);
+  animation:toastIn .28s cubic-bezier(.2,.9,.3,1.3);
+}
+.toast.win{border-color:var(--moss)}
+@keyframes toastIn{from{opacity:0; transform:translateY(16px)}to{opacity:1; transform:none}}
+
+/* ============ RESPONSIVE ============ */
+@media (max-width:1040px){
+  .stage{grid-template-columns:1fr}
+  .codex{position:static}
+  .door-splash{grid-template-columns:1fr}
+  .door-splash .dart{min-height:180px}
+}
+@media (max-width:720px){
+  :root{--gutter:10px; --frame:4px solid var(--ink)}
+  header.masthead{grid-template-columns:1fr}
+  .status-rail{flex-direction:row; flex-wrap:wrap; min-width:0}
+  .status-rail .stat{flex:1; min-width:126px}
+  .rail-btns{width:100%}
+  .room{grid-template-columns:repeat(2,1fr)}
+  .artifact,.artifact:nth-child(n){grid-column:span 2; transform:none}
+  .answer-bar{grid-template-columns:1fr}
+  .rack{grid-template-columns:repeat(4,1fr)}
+  .maze{grid-template-columns:repeat(7,minmax(30px,1fr)); width:100%}
+  .fixrow{grid-template-columns:1fr}
+  .sheet-bd{padding:15px 13px 22px}
+  .cert{padding:22px 18px 20px; border-width:9px}
+}
+
+/* ============ PRINT — certificate only ============ */
+@media print{
+  body{background:#fff; color:#000}
+  .atmos,.shell,.veil,.toast-stack,.cert-actions,.lamp-glow,.lamp-fixture{display:none !important}
+  .cert-veil{position:static; display:block !important; background:#fff; padding:0; overflow:visible}
+  .cert{box-shadow:none; max-width:100%; margin:0; border-color:#000}
+  .cert h2{text-shadow:none}
+  @page{margin:12mm}
+}
+</style>
+</head>
+<body>
+<div class="atmos" aria-hidden="true"></div>
+<div class="lamp-fixture" aria-hidden="true">
+  <svg viewBox="0 0 118 58" width="118" height="58" role="img" aria-label="A hanging pendant lamp, the implied light source">
+    <defs>
+      <linearGradient id="lampFixtureGrad" x1="60.6209" y1="13" x2="60.6209" y2="33.9995" gradientUnits="userSpaceOnUse">
+        <stop offset="0" stop-color="#181818"/>
+        <stop offset="0.663462" stop-color="#2B2B2B"/>
+        <stop offset="0.855769" stop-color="#525146"/>
+        <stop offset="1" stop-color="#73704D"/>
+      </linearGradient>
+      <radialGradient id="lampBulbGrad" cx="0" cy="0" r="1" gradientUnits="userSpaceOnUse" gradientTransform="translate(12.5 14) rotate(90) scale(14 12.5)">
+        <stop class="lamp-bulb-stop-a" offset="0" stop-color="#FFFBAE"/>
+        <stop class="lamp-bulb-stop-b" offset="1" stop-color="#FFFBF1"/>
+      </radialGradient>
+    </defs>
+    <svg x="0" y="0" width="118" height="34" viewBox="0 0 118 34">
+      <path class="lamp-fixture-shape" d="M61 12.8828L60.7715 12.8809C79.9006 13.0757 98.7212 14.4716 103.736 16.5C113.786 20.5647 118 34 118 34H0C0 34 3.56608 22.0894 15.8848 16.5C21.6539 13.8825 39.0828 12.8253 57.0176 12.8584H57V0H61V12.8828Z" fill="url(#lampFixtureGrad)"/>
+    </svg>
+    <circle class="lamp-halo" cx="59" cy="44" r="17" fill="#ffe9a8"/>
+    <svg x="46.5" y="30" width="25" height="28" viewBox="0 0 25 28">
+      <path class="lamp-bulb-shape" d="M8.87097 0C8.87097 1.62376 0 6.8198 0 16.5624C0 26.305 6.45161 28 12.5 28C18.5484 28 25 26.305 25 16.5624C25 6.8198 16.129 1.62376 16.129 0H8.87097Z" fill="url(#lampBulbGrad)"/>
+    </svg>
+    <svg x="56.5" y="36" width="5" height="18" viewBox="0 0 5 18">
+      <path class="lamp-filament-shape" d="M2.43848 0V3.77778L3.93848 5.66667L0.938477 7.55556L3.93848 9.44444L0.938477 11.3333L3.93848 13.2222L0.938477 15.1111L2.43848 17" fill="none" stroke="#D18524" style="mix-blend-mode:hard-light"/>
+    </svg>
+  </svg>
+</div>
+
+<div class="shell">
+  <div class="lamp-glow" aria-hidden="true"></div>
+
+  <header class="masthead">
+    <div class="title-plate">
+      <p class="kicker">Inkwell Lane &middot; Studio 9 &middot; After Hours</p>
+      <h1>The Gutter <span class="amp">&amp;</span> Glory Studio</h1>
+      <p class="subtitle">The studio&rsquo;s founding letterer, Odessa Krahl, sealed the exit door before she retired
+      and left the combination hidden inside her own production tools. Nine locks. One master codex. Fifty minutes
+      before the night watchman resets the building.</p>
+    </div>
+    <div class="status-rail">
+      <div class="stat" id="stat-clock"><span class="lbl">Clock</span><span class="val" id="clock">00:00</span></div>
+      <div class="stat"><span class="lbl">Locks Open</span><span class="val"><span id="solved-count">0</span>/9</span></div>
+      <div class="rail-btns">
+        <button class="btn sm cyan" id="btn-handbook">Studio Handbook</button>
+        <button class="btn sm ghost" id="btn-reset">Reset Studio</button>
+      </div>
+    </div>
+  </header>
+
+  <div class="stage">
+    <main>
+      <div class="room" id="room"><!-- artifacts injected --></div>
+
+      <section class="door-splash" id="door-splash">
+        <svg class="dart" viewBox="0 0 300 260" role="img" aria-label="The studio's sealed freight door, drawn as a splash panel">
+          <defs>
+            <pattern id="dots-door" width="7" height="7" patternUnits="userSpaceOnUse">
+              <circle cx="1.6" cy="1.6" r="1.1" fill="#2f9fd0" opacity=".28"/>
+            </pattern>
+            <linearGradient id="brass" x1="0" y1="0" x2="1" y2="1">
+              <stop offset="0" stop-color="#f0dfae"/><stop offset=".5" stop-color="#b79a5c"/><stop offset="1" stop-color="#6d5930"/>
+            </linearGradient>
+          </defs>
+          <rect width="300" height="260" fill="#221d16"/>
+          <rect width="300" height="260" fill="url(#dots-door)"/>
+          <!-- radiating speed lines: the splash-page treatment -->
+          <g stroke="#f1e3c8" stroke-width="1.1" opacity=".16">
+            <path d="M150 130 L-40 -30"/><path d="M150 130 L60 -40"/><path d="M150 130 L150 -40"/>
+            <path d="M150 130 L250 -40"/><path d="M150 130 L350 -20"/><path d="M150 130 L360 90"/>
+            <path d="M150 130 L360 190"/><path d="M150 130 L250 300"/><path d="M150 130 L150 300"/>
+            <path d="M150 130 L40 300"/><path d="M150 130 L-50 200"/><path d="M150 130 L-50 100"/>
+          </g>
+          <!-- door slab -->
+          <rect x="66" y="26" width="168" height="212" fill="#30281f" stroke="#17140f" stroke-width="5"/>
+          <rect x="76" y="36" width="148" height="192" fill="none" stroke="#4b3f31" stroke-width="3"/>
+          <g fill="none" stroke="#3d3428" stroke-width="2">
+            <path d="M76 84h148M76 132h148M76 180h148"/>
+          </g>
+          <!-- rivets -->
+          <g fill="#6b5a44">
+            <circle cx="84" cy="44" r="3"/><circle cx="216" cy="44" r="3"/>
+            <circle cx="84" cy="220" r="3"/><circle cx="216" cy="220" r="3"/>
+          </g>
+          <!-- four dials -->
+          <g>
+            <circle cx="108" cy="108" r="17" fill="url(#brass)" stroke="#17140f" stroke-width="3"/>
+            <circle cx="150" cy="108" r="17" fill="url(#brass)" stroke="#17140f" stroke-width="3"/>
+            <circle cx="192" cy="108" r="17" fill="url(#brass)" stroke="#17140f" stroke-width="3"/>
+            <circle cx="150" cy="156" r="17" fill="url(#brass)" stroke="#17140f" stroke-width="3"/>
+            <g stroke="#17140f" stroke-width="2.4" stroke-linecap="round">
+              <path d="M108 108 L108 96"/><path d="M150 108 L159 101"/><path d="M192 108 L184 99"/><path d="M150 156 L142 148"/>
+            </g>
+          </g>
+          <!-- handle -->
+          <rect x="196" y="188" width="30" height="9" rx="4" fill="url(#brass)" stroke="#17140f" stroke-width="3"/>
+          <!-- chain across the door -->
+          <g stroke="#8a8277" stroke-width="7" stroke-linecap="round" opacity=".92" id="door-chain">
+            <path d="M52 196 L248 68"/>
+          </g>
+          <g fill="#d6402c" transform="rotate(-8 150 226)" id="door-stamp">
+            <rect x="92" y="212" width="116" height="26" stroke="#17140f" stroke-width="3"/>
+            <text x="150" y="231" font-family="Impact, sans-serif" font-size="16" fill="#f1e3c8" text-anchor="middle" letter-spacing="1" id="door-stamp-text">SEALED</text>
+          </g>
+        </svg>
+        <div class="dbody">
+          <h2>Master Lock &mdash; <span>The Exit Door</span></h2>
+          <p class="dsub">Splash Panel &middot; One panel, the whole page</p>
+          <div id="door-content"></div>
+        </div>
+      </section>
+    </main>
+
+    <aside class="codex" aria-label="Studio Progress Master Codex">
+      <h2>Studio Progress<br>Master Codex</h2>
+      <p class="hint-line">Ingredients recovered</p>
+      <ol id="codex-list"></ol>
+      <div class="bar"><i id="codex-bar"></i></div>
+      <p class="meta" id="codex-meta">Nine locks. Panels 1&ndash;8 open in any order; Panel 9 needs all eight.</p>
+    </aside>
+  </div>
+</div>
+
+<div class="veil" id="veil" role="dialog" aria-modal="true" aria-labelledby="sheet-title">
+  <div class="sheet">
+    <div class="sheet-hd">
+      <h2 class="t" id="sheet-title"><small id="sheet-kicker"></small><span id="sheet-name"></span></h2>
+      <button class="x" id="btn-close" aria-label="Close panel">&#10005;</button>
+    </div>
+    <div class="sheet-bd" id="sheet-body"></div>
+  </div>
+</div>
+
+<div class="cert-veil" id="cert-veil" role="dialog" aria-modal="true">
+  <div id="cert-mount"></div>
+  <div class="cert-actions" id="cert-actions"></div>
+</div>
+
+<div class="toast-stack" id="toasts" aria-live="polite"></div>
+
+<script>
+/* ==================================================================
+   THE GUTTER & GLORY STUDIO — engine
+   Curriculum source: "Common Elements: Graphic Novels" (layout, panels,
+   frame, gutter, bleed, splash page, captions, speech/thought balloons,
+   sound effects/onomatopoeia, motion lines, close-up & long shot,
+   coloration). Puzzle mechanics modelled on a six-task digital escape
+   room: letter-path maze, homophone cipher wheel, reassembled riddle,
+   rebus pictographs, proofreading hunt, and a final encrypted lock.
+   ================================================================== */
+(function(){
+'use strict';
+
+/* ------------------------------------------------------------------
+   1. INLINE SVG ART
+   Everything is vector, drawn here, so the file stays self-contained.
+   ------------------------------------------------------------------ */
+var SV = {
+  open: '<svg class="art" viewBox="0 0 200 118" preserveAspectRatio="xMidYMid slice" role="img" aria-label="',
+  /* Same class of risk as .atmos used to have: a dot sitting only 0.4
+     units from its tile edge (in a 6x6 tile) is exactly what a
+     software re-rasterization pass (forced by the hovered card's own
+     box-shadow transition) can antialias slightly differently frame to
+     frame. Wider tile, wider margin to the edge, same low-visibility
+     texture. This SVG is embedded in every one of the 9 artifact
+     cards, so it is literally what's under the cursor on hover. */
+  defs: '<defs><pattern id="bd" width="9" height="9" patternUnits="userSpaceOnUse"><circle cx="2.5" cy="2.5" r="1.1" fill="#17140f" opacity=".17"/></pattern></defs>'
+};
+function art(label, inner){ return SV.open + label + '">' + SV.defs + '<rect width="200" height="118" fill="#e3d1ad"/><rect width="200" height="118" fill="url(#bd)"/>' + inner + '</svg>'; }
+
+var ART = {};
+
+/* 1 — sketchbook of panel thumbnails */
+ART.sketchbook = art('An open sketchbook of thumbnail panels with a pencil line threading the gutters',
+  '<g transform="rotate(-3 100 60)">'+
+  '<rect x="16" y="14" width="168" height="92" fill="#f6ecd6" stroke="#17140f" stroke-width="3"/>'+
+  '<path d="M100 14v92" stroke="#cdb98f" stroke-width="5"/>'+
+  '<g fill="none" stroke="#17140f" stroke-width="2.4">'+
+  '<rect x="24" y="22" width="32" height="24"/><rect x="60" y="22" width="32" height="24"/>'+
+  '<rect x="24" y="52" width="68" height="20"/><rect x="24" y="78" width="32" height="20"/><rect x="60" y="78" width="32" height="20"/>'+
+  '<rect x="108" y="22" width="68" height="28"/><rect x="108" y="56" width="32" height="18"/>'+
+  '<rect x="144" y="56" width="32" height="18"/><rect x="108" y="80" width="68" height="18"/></g>'+
+  '<path d="M20 34h6m32 0h3m-3 30h3M58 90h3m43-56h5m-5 34h5m-5 30h5" stroke="#2f9fd0" stroke-width="2"/>'+
+  '<path d="M18 20 C58 48 40 70 96 62 C150 54 130 96 182 88" fill="none" stroke="#d6402c" stroke-width="2.6" stroke-dasharray="6 4"/>'+
+  '</g><g transform="rotate(34 168 96)"><rect x="160" y="88" width="46" height="8" fill="#e3a723" stroke="#17140f" stroke-width="2"/><path d="M206 88l10 4-10 4z" fill="#302820"/></g>');
+
+/* 2 — colour press wheel */
+ART.wheel = art('A rotary colour-press wheel with lettered and numbered rings',
+  '<g transform="translate(100 60)">'+
+  '<circle r="48" fill="#f6ecd6" stroke="#17140f" stroke-width="3.5"/>'+
+  '<circle r="34" fill="#e3d1ad" stroke="#17140f" stroke-width="2.5"/>'+
+  '<circle r="20" fill="#2f9fd0" stroke="#17140f" stroke-width="2.5"/>'+
+  '<g stroke="#17140f" stroke-width="1.4">'+
+  '<path d="M0-48V-34M34 0H48M0 34V48M-48 0H-34M24-41l7-12M41 24l12 7M-24 41l-7 12M-41-24l-12-7"/></g>'+
+  '<g font-family="Impact, sans-serif" font-size="11" fill="#17140f" text-anchor="middle">'+
+  '<text y="-37">A</text><text x="38" y="4">G</text><text y="45">N</text><text x="-38" y="4">T</text></g>'+
+  '<g font-family="Courier New, monospace" font-size="8.5" font-weight="700" fill="#17140f" text-anchor="middle">'+
+  '<text y="-24">5</text><text x="26" y="3">12</text><text y="31">18</text><text x="-26" y="3">25</text></g>'+
+  '<circle r="5" fill="#d6402c" stroke="#17140f" stroke-width="2"/></g>'+
+  '<g fill="#d6402c"><path d="M100 4l7 12h-14z" stroke="#17140f" stroke-width="2"/></g>'+
+  '<rect x="6" y="88" width="30" height="22" fill="#d6402c" stroke="#17140f" stroke-width="2.5"/>'+
+  '<rect x="40" y="88" width="30" height="22" fill="#e3a723" stroke="#17140f" stroke-width="2.5"/>'+
+  '<rect x="164" y="88" width="30" height="22" fill="#2f9fd0" stroke="#17140f" stroke-width="2.5"/>');
+
+/* 3 — letterpress riddle slate */
+ART.slate = art('A letterpress slate scattered with loose metal type slugs',
+  '<rect x="14" y="16" width="172" height="88" fill="#302820" stroke="#17140f" stroke-width="4"/>'+
+  '<g fill="#cdc4b2" stroke="#17140f" stroke-width="2">'+
+  '<g transform="rotate(-6 46 38)"><rect x="24" y="30" width="44" height="15"/></g>'+
+  '<g transform="rotate(4 110 36)"><rect x="80" y="28" width="60" height="15"/></g>'+
+  '<g transform="rotate(-2 160 42)"><rect x="142" y="34" width="34" height="15"/></g>'+
+  '<g transform="rotate(7 52 62)"><rect x="26" y="54" width="52" height="15"/></g>'+
+  '<g transform="rotate(-4 126 64)"><rect x="96" y="56" width="60" height="15"/></g>'+
+  '<g transform="rotate(3 60 88)"><rect x="30" y="80" width="66" height="15"/></g>'+
+  '<g transform="rotate(-7 140 88)"><rect x="112" y="80" width="56" height="15"/></g></g>'+
+  '<g font-family="Courier New, monospace" font-size="7" fill="#17140f" font-weight="700">'+
+  '<text x="30" y="41" transform="rotate(-6 46 38)">I refuse</text>'+
+  '<text x="86" y="39" transform="rotate(4 110 36)">the border.</text>'+
+  '<text x="146" y="45" transform="rotate(-2 160 42)">Where</text>'+
+  '<text x="32" y="65" transform="rotate(7 52 62)">my neighbours</text>'+
+  '<text x="102" y="67" transform="rotate(-4 126 64)">stop at a clean</text>'+
+  '<text x="36" y="91" transform="rotate(3 60 88)">black edge, I keep</text>'+
+  '<text x="118" y="91" transform="rotate(-7 140 88)">going&mdash;</text></g>'+
+  '<circle cx="176" cy="26" r="7" fill="#d6402c" stroke="#17140f" stroke-width="2"/>');
+
+/* 4 — rebus card box on a corkboard */
+ART.rebus = art('Six rebus index cards pinned to a corkboard',
+  '<rect width="200" height="118" fill="#b78f56"/><rect width="200" height="118" fill="url(#bd)"/>'+
+  '<g stroke="#17140f" stroke-width="2.5" fill="#f6ecd6">'+
+  '<g transform="rotate(-5 40 34)"><rect x="18" y="20" width="44" height="30"/></g>'+
+  '<g transform="rotate(4 100 32)"><rect x="78" y="18" width="44" height="30"/></g>'+
+  '<g transform="rotate(-3 160 36)"><rect x="138" y="22" width="44" height="30"/></g>'+
+  '<g transform="rotate(6 42 82)"><rect x="20" y="68" width="44" height="30"/></g>'+
+  '<g transform="rotate(-4 100 84)"><rect x="78" y="70" width="44" height="30"/></g>'+
+  '<g transform="rotate(3 158 80)"><rect x="136" y="66" width="44" height="30"/></g></g>'+
+  '<g font-family="Impact, sans-serif" font-size="13" fill="#17140f" text-anchor="middle">'+
+  '<text x="40" y="40" transform="rotate(-5 40 34)">S+</text>'+
+  '<text x="100" y="38" transform="rotate(4 100 32)">&minus;b</text>'+
+  '<text x="160" y="42" transform="rotate(-3 160 36)">+ed</text>'+
+  '<text x="42" y="88" transform="rotate(6 42 82)">v=p</text>'+
+  '<text x="100" y="90" transform="rotate(-4 100 84)">&minus;do</text>'+
+  '<text x="158" y="86" transform="rotate(3 158 80)">+se</text></g>'+
+  '<g fill="#d6402c" stroke="#17140f" stroke-width="1.6">'+
+  '<circle cx="40" cy="22" r="4"/><circle cx="100" cy="20" r="4"/><circle cx="160" cy="24" r="4"/>'+
+  '<circle cx="42" cy="70" r="4"/><circle cx="100" cy="72" r="4"/><circle cx="158" cy="68" r="4"/></g>');
+
+/* 5 — blue-line drafting board */
+ART.board = art('A drafting board ruled in non-repro blue with a T-square laid across it',
+  '<rect x="10" y="12" width="180" height="96" fill="#eef3f6" stroke="#17140f" stroke-width="3.5"/>'+
+  '<g stroke="#2f9fd0" stroke-width="1" opacity=".75">'+
+  '<path d="M10 24h180M10 36h180M10 48h180M10 60h180M10 72h180M10 84h180M10 96h180"/>'+
+  '<path d="M28 12v96M46 12v96M64 12v96M82 12v96M100 12v96M118 12v96M136 12v96M154 12v96M172 12v96"/></g>'+
+  '<g fill="none" stroke="#2f9fd0" stroke-width="2.6"><rect x="28" y="24" width="72" height="36"/><rect x="118" y="24" width="54" height="36"/><rect x="28" y="72" width="144" height="24"/></g>'+
+  '<g font-family="Impact, sans-serif" font-size="13" fill="#17140f"><text x="58" y="48">L</text><text x="142" y="48">A</text><text x="96" y="90">Y</text></g>'+
+  '<g font-family="Impact, sans-serif" font-size="12" fill="#2f9fd0" opacity=".85"><text x="34" y="46">3</text><text x="126" y="46">1</text><text x="34" y="90">6</text><text x="160" y="90">4</text></g>'+
+  '<g fill="#e3a723" stroke="#17140f" stroke-width="2.5"><rect x="4" y="16" width="10" height="92"/><rect x="14" y="56" width="176" height="8"/></g>'+
+  '<g transform="rotate(-42 170 100)"><rect x="150" y="96" width="44" height="7" fill="#2f9fd0" stroke="#17140f" stroke-width="2"/><path d="M194 96l9 3.5-9 3.5z" fill="#302820"/></g>');
+
+/* 6 — proofing galley */
+ART.galley = art('A galley proof marked up in red proofreading strokes beside a rubber stamp',
+  '<g transform="rotate(2 100 60)"><rect x="22" y="10" width="126" height="100" fill="#f6ecd6" stroke="#17140f" stroke-width="3"/>'+
+  '<g stroke="#302820" stroke-width="2.2" opacity=".78">'+
+  '<path d="M32 26h104M32 36h96M32 46h106M32 56h84M32 66h102M32 76h92M32 86h100M32 96h70"/></g>'+
+  '<g stroke="#d6402c" stroke-width="2.4" fill="none">'+
+  '<path d="M58 34c4-5 9-5 13 0"/><path d="M56 36h16"/>'+
+  '<path d="M84 52c5-6 11-6 16 0"/><path d="M82 54h20"/>'+
+  '<path d="M40 74c4-6 10-6 14 0"/><path d="M38 76h18"/>'+
+  '<path d="M104 84c5-6 11-6 16 0"/><path d="M102 86h20"/>'+
+  '<path d="M126 20l16 10M142 20l-16 10"/></g></g>'+
+  '<g transform="rotate(-14 170 84)"><rect x="150" y="70" width="44" height="26" fill="#d6402c" stroke="#17140f" stroke-width="3"/>'+
+  '<text x="172" y="87" font-family="Impact, sans-serif" font-size="11" fill="#f1e3c8" text-anchor="middle">STET</text></g>'+
+  '<rect x="156" y="14" width="30" height="40" fill="#302820" stroke="#17140f" stroke-width="2.5"/>'+
+  '<rect x="162" y="8" width="18" height="8" fill="#e3a723" stroke="#17140f" stroke-width="2.5"/>');
+
+/* 7 — lens rack */
+ART.lenses = art('A rack of camera lenses from a wide barrel to a long telephoto',
+  '<rect x="8" y="76" width="184" height="12" fill="#302820" stroke="#17140f" stroke-width="3"/>'+
+  '<g stroke="#17140f" stroke-width="2.8">'+
+  '<rect x="18" y="52" width="24" height="26" fill="#4b4238"/><circle cx="30" cy="46" r="11" fill="#2f9fd0"/>'+
+  '<rect x="52" y="44" width="22" height="34" fill="#4b4238"/><circle cx="63" cy="38" r="9" fill="#5fb6dd"/>'+
+  '<rect x="84" y="34" width="20" height="44" fill="#4b4238"/><circle cx="94" cy="28" r="8" fill="#e3a723"/>'+
+  '<rect x="114" y="26" width="18" height="52" fill="#4b4238"/><circle cx="123" cy="20" r="7" fill="#d6402c"/>'+
+  '<rect x="142" y="18" width="16" height="60" fill="#4b4238"/><circle cx="150" cy="13" r="6" fill="#f1e3c8"/>'+
+  '<rect x="166" y="14" width="14" height="64" fill="#4b4238"/><circle cx="173" cy="10" r="5" fill="#6f8f4a"/></g>'+
+  '<g stroke="#f1e3c8" stroke-width="1.2" opacity=".5"><path d="M18 62h24M52 56h22M84 48h20M114 40h18M142 32h16M166 28h14"/></g>'+
+  '<g font-family="Courier New, monospace" font-size="7" font-weight="700" fill="#f1e3c8">'+
+  '<text x="20" y="98">XCU</text><text x="54" y="98">CU</text><text x="86" y="98">MED</text><text x="116" y="98">LS</text><text x="146" y="98">XLS</text></g>');
+
+/* 8 — colourist's paint rack */
+ART.paints = art('A colourist\'s rack of paint tubes, each stencilled with a letter',
+  '<rect x="8" y="84" width="184" height="10" fill="#302820" stroke="#17140f" stroke-width="3"/>'+
+  (function(){
+    var cols=['#d6402c','#e8862a','#e3a723','#6f8f4a','#2f9fd0','#7b4f9d','#302820','#f6ecd6','#8a6038','#9a958c','#e08fb0'];
+    var ltr=['O','K','R','A','N','B','S','O','L','L','T'], s='';
+    for(var i=0;i<11;i++){
+      var x=12+i*16.6;
+      s+='<g><rect x="'+x+'" y="30" width="12" height="54" fill="'+cols[i]+'" stroke="#17140f" stroke-width="2.2"/>'+
+         '<rect x="'+(x+3)+'" y="22" width="6" height="9" fill="#9a958c" stroke="#17140f" stroke-width="2"/>'+
+         '<text x="'+(x+6)+'" y="62" font-family="Impact, sans-serif" font-size="9" fill="'+(i===7?'#17140f':'#f1e3c8')+'" text-anchor="middle">'+ltr[i]+'</text></g>';
+    }
+    return s;
+  })()+
+  '<g font-family="Courier New, monospace" font-size="7" fill="#17140f" font-weight="700"><text x="12" y="106">MOOD &rarr; HUE &rarr; LETTER</text></g>');
+
+/* 9 — five-rotor cryptex */
+ART.cryptex = art('A brass cryptex with five lettered rotors',
+  '<g transform="translate(0 6)">'+
+  '<rect x="10" y="38" width="16" height="36" rx="4" fill="#8a7449" stroke="#17140f" stroke-width="3"/>'+
+  '<rect x="174" y="38" width="16" height="36" rx="4" fill="#8a7449" stroke="#17140f" stroke-width="3"/>'+
+  (function(){ var s='', L=['P','?','N','?','L'];
+    for(var i=0;i<5;i++){ var x=28+i*29.4;
+      s+='<g><rect x="'+x+'" y="30" width="27" height="52" fill="#e0c98c" stroke="#17140f" stroke-width="3"/>'+
+         '<rect x="'+x+'" y="44" width="27" height="24" fill="#f6ecd6" stroke="#17140f" stroke-width="2"/>'+
+         '<text x="'+(x+13.5)+'" y="63" font-family="Impact, sans-serif" font-size="17" fill="#17140f" text-anchor="middle">'+L[i]+'</text>'+
+         '<g stroke="#8a7449" stroke-width="1.4"><path d="M'+x+' 36h27M'+x+' 76h27"/></g></g>'; }
+    return s; })()+
+  '<path d="M26 56h148" stroke="#d6402c" stroke-width="2" stroke-dasharray="4 3"/>'+
+  '</g>');
+
+/* door art helpers for the handbook figures live in section 6 */
+
+/* ------------------------------------------------------------------
+   2. ANSWERS (base64 so the page source does not read as a key sheet)
+   ------------------------------------------------------------------ */
+var KEYPACK = 'eyIxIjoiR1VUVEVSIiwiMiI6IkNBUFRJT04iLCIzIjoiQkxFRUQiLCI0IjoiU1BMQVNIIiwiNSI6IkxBWU9VVCIsIjYiOiJGUkFNRSIsIjciOiJDTE9TRVVQIiwiOCI6IkJBTExPT04iLCI5IjoiUEFORUwiLCJkb29yIjoiUEFORUwiLCJkaWFscyI6WzYsNSw2LDVdLCJyZWJ1cyI6WyJTUEVFQ0giLCJQQU5FTCIsIkJBTExPT04iLCJDQVBUSU9OIiwiU09VTkQiLCJTSE9UIl0sInByb29mIjpbIkZPUkVHUk9VTkQiLCJOQVJSQVRPUiIsIk9OT01BVE9QT0VJQSIsIk1PVElPTiIsIlBFUlNQRUNUSVZFIl19';
+var KEY = JSON.parse(atob(KEYPACK));
+function norm(s){ return String(s||'').toUpperCase().replace(/[^A-Z0-9]/g,''); }
+function matches(given, want){ return norm(given) === norm(want); }
+
+/* ------------------------------------------------------------------
+   3. PANEL REGISTRY
+   ------------------------------------------------------------------ */
+var PANELS = [
+  { id:1, name:'The Ink-Trail Sketchbook', tag:'Structure &middot; Gutter', art:ART.sketchbook,
+    kicker:'Lock One &middot; Non-linear',
+    hints:['A gutter is the space <em>between</em> frames. Panels are solid ink &mdash; you cannot walk through a drawing.',
+           'Only one route reaches the FINISH square without doubling back. The six letters you pass, in order, name the space you have been walking through.'] },
+  { id:2, name:'The Colour-Press Wheel', tag:'Text &middot; Captions', art:ART.wheel,
+    kicker:'Lock Two &middot; Non-linear',
+    hints:['Read the strips in numerical order 1&ndash;7, not the order they are lying on the bench.',
+           'Odessa scratched <b>5 = G</b> into the hub. Rotate the inner ring until the 5 sits under the G, then every other number reads straight off.'] },
+  { id:3, name:'The Riddle Slate', tag:'Structure &middot; Bleed', art:ART.slate,
+    kicker:'Lock Three &middot; Non-linear',
+    hints:['The slate is set in reading order: the first slug opens a sentence with a capital letter, the last one closes with a question mark.',
+           'The riddle describes art that will not stay inside its frame &mdash; it runs right off the trimmed edge of the paper.'] },
+  { id:4, name:'The Rebus Card Box', tag:'Structure &middot; Splash Page', art:ART.rebus,
+    kicker:'Lock Four &middot; Non-linear',
+    hints:['Say each picture out loud, then apply the letter arithmetic printed under it. All six answers are terms from your handbook.',
+           'The six shaded boxes, read card 1 through card 6, spell a page that surrenders itself entirely to one panel.'] },
+  { id:5, name:'The Blue-Line Board', tag:'Structure &middot; Layout', art:ART.board,
+    kicker:'Lock Five &middot; Non-linear',
+    hints:['Non-repro blue is the pencil a penciller uses because the camera cannot see it. Drop the blue and only the graphite survives.',
+           'Reading order is a trap. Each surviving letter sits inside a numbered drafting guide &mdash; sort by the guide number, 1 through 6.'] },
+  { id:6, name:'The Proofing Galley', tag:'Text &middot; Sound Effects', art:ART.galley,
+    kicker:'Lock Six &middot; Non-linear',
+    hints:['Five production terms in the memo are misspelled. Click a word to flag it; click again to unflag.',
+           'Spell each correction out in full, then read only the shaded boxes from top to bottom. It is the border around a panel.'] },
+  { id:7, name:'The Lens Rack', tag:'Artistic &middot; Shot Distance', art:ART.lenses,
+    kicker:'Lock Seven &middot; Non-linear',
+    hints:['Order the plates by how near the reader stands: an eye fills the frame at one end, a whole skyline at the other.',
+           'Tightest first. The seven letters, loaded into bays 1&ndash;7 in that order, name the shot that carries emotion.'] },
+  { id:8, name:'The Colourist\'s Rack', tag:'Artistic &middot; Coloration', art:ART.paints,
+    kicker:'Lock Eight &middot; Non-linear',
+    hints:['Every mood line is lifted straight from the handbook&rsquo;s coloration page. Match the mood to its hue, then read the letter stencilled on that tube.',
+           'Seven tubes, seven letters, in clue order. It is the oval that carries a character&rsquo;s voice.'] },
+  { id:9, name:'The Five-Rotor Cryptex', tag:'Master &middot; Synthesis', art:ART.cryptex,
+    kicker:'Lock Nine &middot; Linear climax',
+    locked:true,
+    hints:['Each brass plaque names a codex keyword and a letter position. Pull the words from your Master Codex on the right.',
+           'Rotor by rotor: SPLASH&rarr;2nd, CAPTION&rarr;2nd, BALLOON&rarr;last, FRAME&rarr;last, CLOSEUP&rarr;2nd.'] }
+];
+function panelById(id){ for(var i=0;i<PANELS.length;i++){ if(PANELS[i].id===id) return PANELS[i]; } return null; }
+
+/* ------------------------------------------------------------------
+   4. STATE + PERSISTENCE
+   ------------------------------------------------------------------ */
+var STORE = 'gutter-glory-studio-v1';
+var S = {
+  solved:{},        /* id -> keyword */
+  hintsUsed:{},     /* id -> count */
+  started:null,     /* epoch ms */
+  finished:null,    /* epoch ms */
+  name:'',
+  work:{}           /* per-panel scratch state */
+};
+function load(){
+  try{
+    var raw = localStorage.getItem(STORE);
+    if(raw){ var p = JSON.parse(raw); for(var k in p){ if(Object.prototype.hasOwnProperty.call(p,k)) S[k]=p[k]; } }
+  }catch(e){ /* private browsing or wiped storage: run in-memory */ }
+  if(!S.started){ S.started = Date.now(); save(); }
+}
+function save(){ try{ localStorage.setItem(STORE, JSON.stringify(S)); }catch(e){} }
+function solvedCount(){ var n=0; for(var k in S.solved){ if(S.solved[k]) n++; } return n; }
+function discoveryDone(){ for(var i=1;i<=8;i++){ if(!S.solved[i]) return false; } return true; }
+function hintCount(){ var n=0; for(var k in S.hintsUsed){ n += S.hintsUsed[k]; } return n; }
+
+/* ------------------------------------------------------------------
+   5. CHROME — clock, toasts, codex, room
+   ------------------------------------------------------------------ */
+var elClock = document.getElementById('clock');
+var elStatClock = document.getElementById('stat-clock');
+function fmt(ms){
+  var t = Math.max(0, Math.floor(ms/1000));
+  var m = Math.floor(t/60), s = t%60;
+  return (m<10?'0':'')+m+':'+(s<10?'0':'')+s;
+}
+function tickClock(){
+  var end = S.finished || Date.now();
+  var ms = end - S.started;
+  elClock.textContent = fmt(ms);
+  elStatClock.classList.toggle('alarm', !S.finished && ms > 50*60*1000);
+}
+setInterval(tickClock, 1000);
+
+var elToasts = document.getElementById('toasts');
+function toast(msg, win){
+  var d = document.createElement('div');
+  d.className = 'toast' + (win ? ' win' : '');
+  d.innerHTML = msg;
+  elToasts.appendChild(d);
+  setTimeout(function(){
+    d.style.transition='opacity .4s'; d.style.opacity='0';
+    setTimeout(function(){ if(d.parentNode) d.parentNode.removeChild(d); }, 420);
+  }, 3600);
+}
+
+var elCodex = document.getElementById('codex-list');
+function renderCodex(){
+  var h = '';
+  for(var i=0;i<PANELS.length;i++){
+    var p = PANELS[i], got = S.solved[p.id];
+    h += '<li class="'+(got?'done':'')+'"><span class="i">'+p.id+'</span>'+
+         '<span class="slot">'+(got ? got : '&mdash; &mdash; &mdash; &mdash; &mdash;')+'</span></li>';
+  }
+  elCodex.innerHTML = h;
+  document.getElementById('codex-bar').style.width = (solvedCount()/9*100) + '%';
+  document.getElementById('solved-count').textContent = solvedCount();
+  var meta = document.getElementById('codex-meta');
+  if(S.finished) meta.innerHTML = 'Exit door open. Certificate issued to <b>'+esc(S.name||'the intern')+'</b>.';
+  else if(solvedCount()===9) meta.innerHTML = 'All nine locks open. The exit door is taking dial settings now.';
+  else if(discoveryDone()) meta.innerHTML = 'Panels 1&ndash;8 recovered. The cryptex on Panel 9 has unchained itself.';
+  else meta.innerHTML = 'Nine locks. Panels 1&ndash;8 open in any order; Panel 9 needs all eight.';
+}
+
+function esc(s){ return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+
+var elRoom = document.getElementById('room');
+function renderRoom(){
+  var h = '';
+  for(var i=0;i<PANELS.length;i++){
+    var p = PANELS[i];
+    var done = !!S.solved[p.id];
+    var chained = p.locked && !discoveryDone();
+    h += '<button class="artifact" data-panel="'+p.id+'" data-solved="'+(done?1:0)+'"'+
+         ' aria-label="Panel '+p.id+': '+p.name.replace(/&\w+;/g,'')+(done?' (open)':'')+'">'+
+         p.art +
+         (done ? '<span class="stamp">Open</span>' : '') +
+         (chained ? '<span class="chain">'+
+            '<span><svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="#cdb98f" stroke-width="2.2">'+
+            '<rect x="4" y="10.5" width="16" height="10" rx="1.6"/><path d="M8 10.5V7a4 4 0 0 1 8 0v3.5"/></svg>'+
+            'Chained until<br>Panels 1&ndash;8 are open</span></span>' : '') +
+         '<span class="cap"><span class="no">'+p.id+'</span><span class="nm">'+p.name+
+         '<span class="tag">'+p.tag+'</span></span></span></button>';
+  }
+  elRoom.innerHTML = h;
+  relight();
+}
+elRoom.addEventListener('click', function(ev){
+  var b = ev.target.closest('.artifact'); if(!b) return;
+  var id = parseInt(b.getAttribute('data-panel'),10);
+  var p = panelById(id);
+  if(p.locked && !discoveryDone()){
+    toast('The cryptex is chained to the bench. Open Panels 1&ndash;8 first.');
+    return;
+  }
+  openPanel(id);
+});
+
+/* ------------------------------------------------------------------
+   5b. THE STUDIO LIGHT
+   One implied lamp, off-page up-left of the title plate. relight()
+   measures real card geometry and, per card, computes:
+     --lamp-ang  the direction FROM that card TOWARD the lamp, as a CSS
+                 gradient angle -- so linear-gradient(var(--lamp-ang),
+                 dark, light) always brightens on the lamp-facing edge,
+                 whichever way that edge actually faces on the page.
+     --lamp-lit  0..1 intensity by distance from the lamp.
+     --shade-dx/--shade-dy  the offset for an INSET box-shadow. An
+                 inset shadow's dark area sits opposite its own offset
+                 (the mirror of an outer shadow), so this points AWAY
+                 from the lamp -- which lands the actual visible
+                 darkness on the NEAR side, as if the border is a
+                 raised frame around a recessed card and its own bulk
+                 is blocking the light closest to the source. Actual
+                 depth, not a glow.
+   --flick (on body) is the single dial every one of those multiplies
+   against -- never fully 0, so nothing goes truly dark, just dimmer.
+   flickerLoop() sets it directly via inline style on a randomized
+   rest/dip cadence; the CSS transition on --flick supplies the easing.
+   ------------------------------------------------------------------ */
+var LIGHT_OFFSET_X = 46, LIGHT_OFFSET_Y = 46;   /* pushes the source off-page, up-left of the plate's corner */
+var LIGHT_RADIUS = 2800, LIGHT_FALLOFF = 1.0, LIGHT_FLOOR = .08;
+var titlePlate = document.querySelector('.title-plate');
+var lampGlow = document.querySelector('.lamp-glow');
+var lampFixture = document.querySelector('.lamp-fixture');
+/* .lamp-fixture's own bulb sits at local (59,44) inside its 118x58 box
+   (see the markup: the nested bulb <svg> is at x=46.5,y=30, width=25,
+   height=28 -> its own center is 46.5+12.5=59, 30+14=44). Tracking
+   title-plate's ACTUAL left edge (rather than a static CSS pixel
+   guess) is what fixes the real bug: .shell recenters itself with
+   growing empty margins on any viewport wider than its own 1360px
+   max-width, so a fixed-pixel lamp drifted further and further from
+   the header's corner as the window got wider -- confirmed at a
+   1920px-wide viewport, title-plate's corner sits at x=297, nowhere
+   near a static left:14px guess.
+   LAMP_ANCHOR_X is deliberately much smaller than LIGHT_OFFSET_X (46):
+   that 46px offset is the INVISIBLE lighting-math point (Lx/Ly), which
+   is intentionally off-page -- fine for math nobody looks at directly,
+   but tying the VISIBLE bulb to that same point pushed the fixture's
+   own height (44px needed above the bulb) to top:-76px, off-screen
+   entirely, since title-plate's own top edge is only ~13px from the
+   top of the page to begin with. So only X tracks the corner
+   dynamically, close in per this request; Y stays at the CSS default
+   (0) -- there simply isn't vertical room for the same treatment. */
+var LAMP_BULB_X = 59, LAMP_BULB_Y = 44, LAMP_ANCHOR_X = 20;
+
+function relight(){
+  if(!titlePlate) return;
+  var tRect = titlePlate.getBoundingClientRect();
+  var sx = window.pageXOffset || document.documentElement.scrollLeft;
+  var sy = window.pageYOffset || document.documentElement.scrollTop;
+
+  /* the light point, in document space, a little further up-left than the plate's real corner */
+  var Lx = tRect.left + sx - LIGHT_OFFSET_X;
+  var Ly = tRect.top + sy - LIGHT_OFFSET_Y;
+
+  if(lampFixture){
+    var bulbTargetX = tRect.left + sx - LAMP_ANCHOR_X;
+    var fixtureLeft = bulbTargetX - LAMP_BULB_X;
+    /* Clamp so the fixture's own left edge never goes negative -- on
+       a narrow/default-width viewport, title-plate's corner sits close
+       enough to the true page edge that tracking it exactly would push
+       roughly half the fixture (the cone extends further left of the
+       bulb than the bulb itself sits from the corner) off past x=0,
+       clipped by body's overflow-x:hidden. A small positive floor
+       keeps it fully visible without undoing the wide-viewport fix
+       above (that case has plenty of room and never hits this floor). */
+    if(fixtureLeft < 4) fixtureLeft = 4;
+    lampFixture.style.left = fixtureLeft + 'px';
+  }
+
+  if(lampGlow){
+    var shell = document.querySelector('.shell');
+    var sRect = shell.getBoundingClientRect();
+    /* .lamp-glow is position:absolute inside .shell (its containing
+       block), so left/top are relative to .shell's own origin, not the
+       document -- same document-anchored math as every card, just
+       expressed in .shell's local coordinate space. */
+    lampGlow.style.left = (Lx - (sRect.left + sx)) + 'px';
+    lampGlow.style.top = (Ly - (sRect.top + sy)) + 'px';
+  }
+
+  var targets = document.querySelectorAll('.title-plate, .stat, .artifact, .codex, .door-splash');
+  for(var i=0;i<targets.length;i++){
+    var el = targets[i];
+    var r = el.getBoundingClientRect();
+    var cx = r.left + r.width/2 + sx, cy = r.top + r.height/2 + sy;
+    var dx = cx - Lx, dy = cy - Ly;             /* points AWAY from the lamp, toward this card */
+    var dist = Math.sqrt(dx*dx + dy*dy) || 1;
+    var lit = 1 - Math.pow(dist / LIGHT_RADIUS, LIGHT_FALLOFF);
+    if(lit < LIGHT_FLOOR) lit = LIGHT_FLOOR;
+    if(lit > 1) lit = 1;
+
+    /* CSS linear-gradient(angle, ...) paints its LAST colour stop in
+       the direction the angle points (0deg = up, 90deg = right). To
+       land the bright stop on the lamp-facing edge, point the angle
+       from this card TOWARD the lamp, i.e. the direction (-dx,-dy). */
+    var ang = Math.atan2(-dx, dy) * 180 / Math.PI;
+
+    /* The border is a raised FRAME around a recessed card surface, not
+       a raised card casting a shadow onto the wall behind it. That
+       means the frame's own bulk blocks light closest to the lamp --
+       picture a sunken mat around a photo, lit from the upper-left: the
+       shadow hugs the near (upper-left, lamp-facing) inner edge, and
+       the far edge stays lit because nothing stands between it and the
+       light. An inset box-shadow's dark area lands on the side
+       OPPOSITE its offset (the mirror of an outer shadow), so to land
+       the dark area on the NEAR (lamp-facing) side, the offset itself
+       must point AWAY from the lamp: (dx,dy) as-is. */
+    var shadeDx = (dx/dist) * 11, shadeDy = (dy/dist) * 11;
+
+    el.style.setProperty('--lamp-ang', ang.toFixed(1) + 'deg');
+    el.style.setProperty('--lamp-lit', lit.toFixed(3));
+    el.style.setProperty('--shade-dx', shadeDx.toFixed(1) + 'px');
+    el.style.setProperty('--shade-dy', shadeDy.toFixed(1) + 'px');
+  }
+}
+
+var relightTimer = null;
+window.addEventListener('resize', function(){
+  clearTimeout(relightTimer);
+  relightTimer = setTimeout(relight, 120);
+});
+
+
+/* flicker driver: mostly lit, a handful of low-light dips (never a full
+   cutout) on an irregular cadence. --flick is set directly via inline
+   style rather than a class toggle, since each dip's own depth is
+   randomized too -- a class can only ever encode one fixed target.
+   The actual easing is entirely CSS's job (the --flick transition
+   above); this just decides WHEN and HOW LOW. Reduced-motion users
+   get the lit state permanently and the timer never starts at all. */
+var prefersReducedMotion = !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
+function randBetween(a,b){ return a + Math.random()*(b-a); }
+function setFlick(v){ document.body.style.setProperty('--flick', v); }
+function flickerLoop(){
+  setFlick(1);
+  setTimeout(function(){
+    var dips = 1 + Math.floor(Math.random()*4); /* 1-4, irregular */
+    var step = 0;
+    function nextDip(){
+      if(step >= dips){ flickerLoop(); return; }
+      step++;
+      var floor = .35 + Math.random()*.3;   /* .35-.65 -- dims, never goes dark */
+      setFlick(floor.toFixed(2));
+      setTimeout(function(){
+        setFlick(1);
+        setTimeout(nextDip, randBetween(80,260));
+      }, randBetween(90,220));
+    }
+    nextDip();
+  }, randBetween(2600,7400));
+}
+if(!prefersReducedMotion){ flickerLoop(); }
+
+/* ------------------------------------------------------------------
+   6. MODAL SHELL + SHARED ANSWER BAR
+   ------------------------------------------------------------------ */
+var veil = document.getElementById('veil');
+var sheetBody = document.getElementById('sheet-body');
+var lastFocus = null;
+
+function closeSheet(){
+  veil.classList.remove('open');
+  sheetBody.innerHTML = '';
+  if(lastFocus && lastFocus.focus) lastFocus.focus();
+}
+document.getElementById('btn-close').addEventListener('click', closeSheet);
+veil.addEventListener('click', function(e){ if(e.target === veil) closeSheet(); });
+document.addEventListener('keydown', function(e){
+  if(e.key === 'Escape'){
+    if(veil.classList.contains('open')) closeSheet();
+    else if(document.getElementById('cert-veil').classList.contains('open')) closeCert();
+  }
+});
+
+function openSheet(kicker, name, bodyHTML){
+  lastFocus = document.activeElement;
+  document.getElementById('sheet-kicker').innerHTML = kicker;
+  document.getElementById('sheet-name').innerHTML = name;
+  /* Swap in a clean node first: several panels delegate from sheetBody itself,
+     and cloning drops the previous panel's listeners instead of stacking them. */
+  var fresh = sheetBody.cloneNode(false);
+  sheetBody.parentNode.replaceChild(fresh, sheetBody);
+  sheetBody = fresh;
+  sheetBody.innerHTML = bodyHTML;
+  veil.classList.add('open');
+  veil.scrollTop = 0;
+  document.querySelector('.sheet').scrollIntoView({block:'start'});
+}
+
+/* Briefing caption + numbered steps, mirroring the source deck's task cards */
+function briefing(lead, text, steps){
+  var h = '<div class="caption-box"><span class="lead">'+lead+'</span>'+text;
+  if(steps && steps.length){
+    h += '<ol class="steps" style="margin-top:9px">';
+    for(var i=0;i<steps.length;i++) h += '<li>'+steps[i]+'</li>';
+    h += '</ol>';
+  }
+  return h + '</div>';
+}
+
+/* The keyword bar every discovery panel ends with */
+function answerBar(id, label){
+  var p = panelById(id);
+  var used = S.hintsUsed[id] || 0;
+  var solved = !!S.solved[id];
+  if(solved){
+    return '<div class="solved-note"><strong>'+S.solved[id]+'</strong>'+
+           'Logged to the Studio Progress Master Codex as ingredient '+id+' of 9. '+
+           'Close this panel and pick up another tool &mdash; or head for the cryptex once all eight are in.</div>';
+  }
+  return '<div class="answer-bar" id="ab-'+id+'">'+
+    '<div><label for="ansin-'+id+'">'+label+'</label>'+
+    '<input id="ansin-'+id+'" type="text" autocomplete="off" spellcheck="false" placeholder="TYPE THE KEYWORD"></div>'+
+    '<button class="btn" id="anssub-'+id+'">Log It</button>'+
+    '<button class="btn ghost" id="anshint-'+id+'">Hint '+(used>=p.hints.length?'&mdash;':(used+1)+'/'+p.hints.length)+'</button>'+
+    '<div class="verdict" id="ansmsg-'+id+'"></div></div>'+
+    '<div class="hint-out" id="hintout-'+id+'"></div>';
+}
+
+function wireAnswerBar(id, onSolve){
+  if(S.solved[id]) return;
+  var input = document.getElementById('ansin-'+id);
+  var msg = document.getElementById('ansmsg-'+id);
+  var bar = document.getElementById('ab-'+id);
+  var hintOut = document.getElementById('hintout-'+id);
+  var hintBtn = document.getElementById('anshint-'+id);
+  var p = panelById(id);
+
+  function paintHints(){
+    var used = S.hintsUsed[id] || 0;
+    if(used > 0){
+      var h = '';
+      for(var i=0;i<used;i++) h += '<p><b>Hint '+(i+1)+'</b>'+p.hints[i]+'</p>';
+      hintOut.innerHTML = h; hintOut.classList.add('show');
+    }
+    hintBtn.innerHTML = 'Hint ' + (used>=p.hints.length ? '&mdash;' : (used+1)+'/'+p.hints.length);
+    hintBtn.disabled = used >= p.hints.length;
+  }
+  paintHints();
+
+  hintBtn.addEventListener('click', function(){
+    var used = S.hintsUsed[id] || 0;
+    if(used >= p.hints.length) return;
+    S.hintsUsed[id] = used + 1; save(); paintHints();
+  });
+
+  function submit(){
+    var v = input.value;
+    if(!norm(v)){ msg.className='verdict bad'; msg.textContent='The field is empty.'; return; }
+    if(matches(v, KEY[String(id)])){
+      S.solved[id] = KEY[String(id)];
+      save();
+      msg.className = 'verdict good';
+      msg.textContent = 'Locked in.';
+      renderCodex(); renderRoom(); renderDoor();
+      toast('Panel '+id+' open &mdash; <b>'+KEY[String(id)]+'</b> added to the codex.', true);
+      if(onSolve) onSolve();
+      setTimeout(function(){ openPanel(id); }, 620);
+    } else {
+      msg.className = 'verdict bad';
+      msg.textContent = 'That is not what the lock is listening for. Re-read your working.';
+      bar.classList.remove('shake');
+      void bar.offsetWidth;
+      bar.classList.add('shake');
+    }
+  }
+  document.getElementById('anssub-'+id).addEventListener('click', submit);
+  input.addEventListener('keydown', function(e){ if(e.key==='Enter'){ e.preventDefault(); submit(); } });
+}
+
+/* per-panel scratch state helper */
+function work(id, init){
+  if(!S.work[id]) { S.work[id] = init; save(); }
+  return S.work[id];
+}
+
+/* letterbox row used by the rebus + proofing panels */
+function boxRow(word, total, keyIdx){
+  var h = '<div class="boxes">';
+  for(var i=0;i<total;i++){
+    var ch = word.charAt(i) || '';
+    var cls = 'lbox' + (i===keyIdx ? ' key' : '') + (i >= word.length && word.length ? ' dead' : '');
+    h += '<span class="'+cls+'">'+esc(ch)+'</span>';
+  }
+  return h + '</div>';
+}
+
+function openPanel(id){
+  var p = panelById(id);
+  var build = BUILDERS[id];
+  openSheet(p.kicker, p.name, build());
+  WIRES[id]();
+}
+
+var BUILDERS = {}, WIRES = {};
+
+/* ==================================================================
+   PANEL 1 — THE INK-TRAIL SKETCHBOOK
+   Walk only the gutters. Collect the letters you pass, in order.
+   ================================================================== */
+var MZ = {
+  grid:['1110111','0010101','1110101','1000101','1110111','0010001','1111111'],
+  start:'0,0', finish:'6,6',
+  letters:{'0,1':'G','2,2':'U','2,0':'T','4,1':'T','6,2':'E','6,5':'R',
+           '6,0':'S','6,1':'P','0,4':'A','0,5':'K','0,6':'W','1,4':'N','1,6':'B',
+           '2,4':'L','2,6':'H','3,4':'I','3,6':'C','4,4':'D','4,5':'O','4,6':'M','5,6':'Y'}
+};
+function mzOpen(r,c){ return r>=0 && r<7 && c>=0 && c<7 && MZ.grid[r].charAt(c)==='1'; }
+
+BUILDERS[1] = function(){
+  var w = work(1, {path:[MZ.start]});
+  return briefing('Caption &middot; Task one',
+    'Odessa kept her page breakdowns in this book. She also kept a habit: she wrote secrets in the white space, '+
+    'never on the drawings. <b>The inked panels are solid &mdash; you cannot walk through a drawing.</b>',
+    ['Step from the <b>START</b> square to the <b>FINISH</b> square using only the pale gutter squares, one step at a time, up/down/left/right.',
+     'Click a square to step onto it. Click a square already on your trail to back up to it.',
+     'Every letter you step on is added to your trail in order. Only one route gets you across without doubling back.']) +
+    '<h3 class="blk">Page Breakdown &mdash; Volume II</h3>'+
+    '<div class="maze-wrap"><div class="maze" id="maze"></div>'+
+    '<div class="maze-side"><h3 class="blk" style="margin-top:0">Letters Collected</h3>'+
+    '<div class="trail" id="trail"></div>'+
+    '<p style="font-family:var(--font-tech); font-size:.72rem; line-height:1.7; margin-top:11px" id="mzstat"></p>'+
+    '<button class="btn sm verm" id="mzclear">Rub Out The Trail</button></div></div>'+
+    answerBar(1, 'The white space you walked through is called a &hellip;');
+};
+
+WIRES[1] = function(){
+  var w = S.work[1], mz = document.getElementById('maze');
+  var trail = document.getElementById('trail'), stat = document.getElementById('mzstat');
+
+  function paint(){
+    var h = '', i;
+    for(var r=0;r<7;r++){ for(var c=0;c<7;c++){
+      var k = r+','+c, open = mzOpen(r,c), on = w.path.indexOf(k), L = MZ.letters[k]||'';
+      var cls = 'cell ' + (open ? 'gutter' : 'blocked');
+      if(on > -1) cls += ' on';
+      if(on > -1 && L) cls += ' lettered';
+      if(on === w.path.length-1) cls += ' head';
+      h += '<div class="'+cls+'" data-k="'+k+'">'+
+           (k===MZ.start ? '<span class="flag">Start</span>' : '')+
+           (k===MZ.finish ? '<span class="flag">Finish</span>' : '')+
+           (open ? L : '')+'</div>';
+    }}
+    mz.innerHTML = h;
+    var got = '';
+    for(i=0;i<w.path.length;i++){ if(MZ.letters[w.path[i]]) got += MZ.letters[w.path[i]]; }
+    trail.textContent = got || '—';
+    var atEnd = w.path[w.path.length-1] === MZ.finish;
+    stat.innerHTML = atEnd
+      ? '<b style="color:#4a6b2c">You are standing on FINISH.</b> '+w.path.length+' squares walked, '+got.length+' letters collected.'
+      : w.path.length + ' square' + (w.path.length===1?'':'s') + ' walked. Keep going &mdash; you have not reached FINISH.';
+  }
+  paint();
+
+  mz.addEventListener('click', function(ev){
+    var cell = ev.target.closest('.cell'); if(!cell) return;
+    var k = cell.getAttribute('data-k');
+    var at = w.path.indexOf(k);
+    if(at > -1){ w.path = w.path.slice(0, at+1); save(); paint(); return; }
+    if(!mzOpen(parseInt(k.split(',')[0],10), parseInt(k.split(',')[1],10))){
+      toast('That square is an inked panel, not a gutter.'); return;
+    }
+    var head = w.path[w.path.length-1].split(',');
+    var next = k.split(',');
+    var d = Math.abs(head[0]-next[0]) + Math.abs(head[1]-next[1]);
+    if(d !== 1){ toast('One step at a time &mdash; up, down, left or right from where you stand.'); return; }
+    w.path.push(k); save(); paint();
+  });
+  document.getElementById('mzclear').addEventListener('click', function(){
+    w.path = [MZ.start]; save(); paint();
+  });
+  wireAnswerBar(1);
+};
+
+/* ==================================================================
+   PANEL 2 — THE COLOUR-PRESS WHEEL
+   Homophone strips give numbers; the rotating wheel turns them to letters.
+   ================================================================== */
+var HOMO = [
+  { n:1, pre:'Our studio editor will ', post:' you to letter the balloons last, once the art is locked.',
+    opts:[{w:'advise', num:1},{w:'advice', num:9}], right:0 },
+  { n:2, pre:'A splash page gives the ', post:' page over to a single panel.',
+    opts:[{w:'hole', num:4},{w:'whole', num:25}], right:1 },
+  { n:3, pre:'Over the ', post:' of nine pages the gutters widen, stretching the passage of time.',
+    opts:[{w:'coarse', num:22},{w:'course', num:14}], right:1 },
+  { n:4, pre:'Motion lines make a ', post:' drawing read as movement.',
+    opts:[{w:'stationary', num:18},{w:'stationery', num:6}], right:0 },
+  { n:5, pre:'Coloration ', post:' the mood of a scene as much as the dialogue does.',
+    opts:[{w:'effects', num:20},{w:'affects', num:7}], right:1 },
+  { n:6, pre:'The art ', post:' beyond the frame and ran off the trimmed edge of the paper.',
+    opts:[{w:'passed', num:13},{w:'past', num:3}], right:0 },
+  { n:7, pre:'The ', post:' reason for a wide gutter is to signal a long jump in time.',
+    opts:[{w:'principle', num:23},{w:'principal', num:12}], right:1 }
+];
+var HOMO_ORDER = [3,6,1,5,0,4,2];   /* strips lie on the bench out of order */
+
+function wheelSVG(offset){
+  var seg = 360/26, cx = 140, cy = 140, s = '', i, a, rad, x, y;
+  s += '<svg viewBox="0 0 280 280" width="280" height="280" role="img" aria-label="Cipher wheel: outer ring of letters, rotating inner ring of numbers">';
+  s += '<circle cx="140" cy="140" r="128" fill="#f6ecd6" stroke="#17140f" stroke-width="4"/>';
+  s += '<circle cx="140" cy="140" r="100" fill="#e3d1ad" stroke="#17140f" stroke-width="3"/>';
+  /* outer: letters A-Z, fixed */
+  for(i=0;i<26;i++){
+    a = -90 + i*seg; rad = a*Math.PI/180;
+    x = cx + 114*Math.cos(rad); y = cy + 114*Math.sin(rad);
+    s += '<text x="'+x.toFixed(1)+'" y="'+y.toFixed(1)+'" font-family="Impact, sans-serif" font-size="15" fill="#17140f"'+
+         ' text-anchor="middle" dominant-baseline="middle" transform="rotate('+(a+90).toFixed(1)+' '+x.toFixed(1)+' '+y.toFixed(1)+')">'+
+         String.fromCharCode(65+i)+'</text>';
+    a = -90 + (i-0.5)*seg; rad = a*Math.PI/180;
+    s += '<line x1="'+(cx+100*Math.cos(rad)).toFixed(1)+'" y1="'+(cy+100*Math.sin(rad)).toFixed(1)+
+         '" x2="'+(cx+128*Math.cos(rad)).toFixed(1)+'" y2="'+(cy+128*Math.sin(rad)).toFixed(1)+'" stroke="#17140f" stroke-width="1.2"/>';
+  }
+  /* inner: numbers 1-26, rotates */
+  s += '<g transform="rotate('+(offset*seg).toFixed(3)+' 140 140)">';
+  s += '<circle cx="140" cy="140" r="98" fill="#f1e3c8" stroke="#17140f" stroke-width="2.5"/>';
+  s += '<circle cx="140" cy="140" r="62" fill="#e3d1ad" stroke="#17140f" stroke-width="2.5"/>';
+  for(i=0;i<26;i++){
+    a = -90 + i*seg; rad = a*Math.PI/180;
+    x = cx + 80*Math.cos(rad); y = cy + 80*Math.sin(rad);
+    s += '<text x="'+x.toFixed(1)+'" y="'+y.toFixed(1)+'" font-family="Courier New, monospace" font-weight="700" font-size="12" fill="#1c6b8f"'+
+         ' text-anchor="middle" dominant-baseline="middle" transform="rotate('+(a+90).toFixed(1)+' '+x.toFixed(1)+' '+y.toFixed(1)+')">'+(i+1)+'</text>';
+    a = -90 + (i-0.5)*seg; rad = a*Math.PI/180;
+    s += '<line x1="'+(cx+62*Math.cos(rad)).toFixed(1)+'" y1="'+(cy+62*Math.sin(rad)).toFixed(1)+
+         '" x2="'+(cx+98*Math.cos(rad)).toFixed(1)+'" y2="'+(cy+98*Math.sin(rad)).toFixed(1)+'" stroke="#17140f" stroke-width="1"/>';
+  }
+  s += '<circle cx="140" cy="140" r="58" fill="#2f9fd0" stroke="#17140f" stroke-width="3"/>';
+  s += '<text x="140" y="134" font-family="Impact, sans-serif" font-size="26" fill="#17140f" text-anchor="middle">5 = G</text>';
+  s += '<text x="140" y="154" font-family="Courier New, monospace" font-size="8.5" fill="#f1e3c8" text-anchor="middle" letter-spacing="1.5">ENGRAVED IN THE HUB</text>';
+  s += '<circle cx="140" cy="140" r="6" fill="#17140f"/></g>';
+  /* fixed index mark at 12 o'clock */
+  s += '<path d="M140 4 l9 16 h-18 z" fill="#d6402c" stroke="#17140f" stroke-width="2"/>';
+  return s + '</svg>';
+}
+
+BUILDERS[2] = function(){
+  var w = work(2, {picks:{}, offset:0});
+  var h = briefing('Caption &middot; Task two',
+    'The colour press turns numbers into letters, but only when it is calibrated. Seven sentence strips are lying '+
+    'on the bench in the wrong order. Each one hides a <b>homophone</b> &mdash; two words that sound alike and mean '+
+    'different things &mdash; and each spelling carries a number.',
+    ['Put the strips in numerical order 1&ndash;7 in your head, then decide which spelling each sentence needs.',
+     'Click the correct word. Its number drops into that slot of the decoder.',
+     'Rotate the inner ring of the press until the hub engraving <b>5 = G</b> is true, then read your seven numbers off as letters.']);
+  h += '<h3 class="blk">Sentence Strips &mdash; Scattered</h3>';
+  for(var i=0;i<HOMO_ORDER.length;i++){
+    var q = HOMO[HOMO_ORDER[i]], sel = w.picks[q.n];
+    h += '<div class="strip"><span class="sn">'+q.n+'</span>'+q.pre+'<span class="hchoice">';
+    for(var j=0;j<q.opts.length;j++){
+      h += '<button data-q="'+q.n+'" data-j="'+j+'" class="'+(sel===j?'sel':'')+'">'+
+           q.opts[j].w+'<span class="num">'+q.opts[j].num+'</span></button>';
+    }
+    h += '</span>'+q.post+'</div>';
+  }
+  h += '<h3 class="blk">The Colour Press</h3><div class="wheel-row">'+
+       '<div class="wheel-box"><div id="wheelmount">'+wheelSVG(w.offset)+'</div>'+
+       '<div class="wheel-ctl"><button class="btn sm" id="wl">&#9664; Rotate</button>'+
+       '<span class="deg" id="wdeg"></span><button class="btn sm" id="wr">Rotate &#9654;</button></div></div>'+
+       '<div class="decoder"><h3 class="blk" style="margin-top:0">Decoder</h3>'+
+       '<div class="numstrip" id="numstrip"></div>'+
+       '<p style="font-family:var(--font-tech); font-size:.74rem; line-height:1.7" id="wmsg"></p></div></div>'+
+       answerBar(2, 'Seven letters &mdash; the boxed narration in a panel');
+  return h;
+};
+
+WIRES[2] = function(){
+  var w = S.work[2];
+  var seg = 360/26;
+
+  function letterFor(num){
+    /* number num sits at inner index num-1; rotating by offset puts it under outer letter (num-1+offset) */
+    var idx = ((num - 1 + w.offset) % 26 + 26) % 26;
+    return String.fromCharCode(65 + idx);
+  }
+  function paint(){
+    document.getElementById('wheelmount').innerHTML = wheelSVG(w.offset);
+    document.getElementById('wdeg').innerHTML = (w.offset*seg).toFixed(1)+'&deg; &middot; 5 &rarr; '+letterFor(5);
+    var h = '', i, ok = 0;
+    for(i=0;i<HOMO.length;i++){
+      var q = HOMO[i], pick = w.picks[q.n];
+      var num = (pick === undefined) ? null : q.opts[pick].num;
+      if(pick === q.right) ok++;
+      h += '<div class="nb'+(num!==null?' filled':'')+'">#'+q.n+'<b>'+(num!==null?num:'&middot;')+'</b>'+
+           '<span class="out">'+(num!==null ? letterFor(num) : '')+'</span></div>';
+    }
+    document.getElementById('numstrip').innerHTML = h;
+    var msg = document.getElementById('wmsg');
+    var picked = Object.keys(w.picks).length;
+    var cal = letterFor(5) === 'G';
+    msg.innerHTML =
+      (cal ? '<b style="color:#4a6b2c">Press calibrated:</b> 5 reads as G.' : '<b style="color:#b3341f">Press out of true:</b> 5 currently reads as '+letterFor(5)+'.') +
+      '<br>' + picked + ' of 7 strips answered.';
+  }
+  paint();
+
+  sheetBody.addEventListener('click', function(ev){
+    var b = ev.target.closest('.hchoice button'); if(!b) return;
+    var qn = parseInt(b.getAttribute('data-q'),10), j = parseInt(b.getAttribute('data-j'),10);
+    w.picks[qn] = j; save();
+    var wrap = b.parentNode, kids = wrap.querySelectorAll('button');
+    for(var i=0;i<kids.length;i++) kids[i].className = (i===j ? 'sel' : '');
+    paint();
+  });
+  document.getElementById('wl').addEventListener('click', function(){ w.offset = (w.offset+25)%26; save(); paint(); });
+  document.getElementById('wr').addEventListener('click', function(){ w.offset = (w.offset+1)%26; save(); paint(); });
+  wireAnswerBar(2);
+};
+
+/* ==================================================================
+   PANEL 3 — THE RIDDLE SLATE
+   Reassemble the scattered type slugs, then answer the riddle.
+   ================================================================== */
+var SLUGS = [
+  'I refuse the border.', 'Where my neighbours stop', 'at a clean black edge,',
+  'I keep going—', 'past the frame,', 'past the trim line,',
+  'off the paper entirely.', 'The page cannot', 'contain me. What am I?'
+];
+var SLUG_POOL = [4,8,1,6,0,3,7,2,5];
+
+BUILDERS[3] = function(){
+  var w = work(3, {laid:[], done:false});
+  var h = briefing('Caption &middot; Task three',
+    'A tray of metal type went over on the night shift. Nine slugs of a riddle Odessa set herself are scattered '+
+    'across the composing slate, back to front.',
+    ['Click the slugs in reading order to lock them into the slate. Click a placed slug to pull it back out.',
+     'When all nine are seated, hit <b>Read The Slate</b>. Type is set left to right, top to bottom &mdash; the first slug opens with a capital, the last closes with a question mark.',
+     'Answer the riddle. That answer is your codex ingredient.']);
+  h += '<h3 class="blk">Loose Slugs</h3><div class="slug-pool" id="pool"></div>'+
+       '<h3 class="blk">The Composing Slate</h3><div class="slate" id="slate"></div>'+
+       '<div style="margin-top:13px; display:flex; gap:9px; flex-wrap:wrap; align-items:center">'+
+       '<button class="btn" id="slread">Read The Slate</button>'+
+       '<button class="btn ghost sm" id="slclear">Dump The Slate</button>'+
+       '<span class="strikes" id="slmsg"></span></div>'+
+       '<div class="riddle-read'+(w.done?' show':'')+'" id="riddleread">'+SLUGS.join(' ')+'</div>';
+  h += '<div id="p3answer">'+ (w.done || S.solved[3] ? answerBar(3, 'Art that will not stay inside the frame') :
+       '<div class="door-locked-note" style="margin-top:20px">The keyword field opens once the slate is set correctly and read.</div>') +'</div>';
+  return h;
+};
+
+WIRES[3] = function(){
+  var w = S.work[3];
+  var pool = document.getElementById('pool'), slate = document.getElementById('slate');
+  var msg = document.getElementById('slmsg');
+
+  function paint(){
+    var h = '', i, idx;
+    for(i=0;i<SLUG_POOL.length;i++){
+      idx = SLUG_POOL[i];
+      var used = w.laid.indexOf(idx) > -1;
+      h += '<div class="slug'+(used?' used':'')+'" data-i="'+idx+'">'+esc(SLUGS[idx])+'</div>';
+    }
+    pool.innerHTML = h;
+    if(!w.laid.length){ slate.innerHTML = '<span class="ghost">EMPTY SLATE &mdash; SET NINE SLUGS</span>'; }
+    else {
+      h = '';
+      for(i=0;i<w.laid.length;i++) h += '<div class="placed" data-at="'+i+'">'+esc(SLUGS[w.laid[i]])+'</div>';
+      slate.innerHTML = h;
+    }
+  }
+  paint();
+
+  pool.addEventListener('click', function(ev){
+    var d = ev.target.closest('.slug'); if(!d || d.classList.contains('used')) return;
+    w.laid.push(parseInt(d.getAttribute('data-i'),10)); save(); paint();
+  });
+  slate.addEventListener('click', function(ev){
+    var d = ev.target.closest('.placed'); if(!d) return;
+    w.laid.splice(parseInt(d.getAttribute('data-at'),10), 1); save(); paint();
+  });
+  document.getElementById('slclear').addEventListener('click', function(){ w.laid=[]; save(); paint(); msg.textContent=''; });
+  document.getElementById('slread').addEventListener('click', function(){
+    if(w.laid.length !== 9){ msg.textContent = 'Only '+w.laid.length+' of 9 slugs are seated.'; return; }
+    var ok = true;
+    for(var i=0;i<9;i++){ if(w.laid[i] !== i){ ok = false; break; } }
+    if(!ok){ msg.textContent = 'The line reads as nonsense. Slug ' + (i+1) + ' onward is out of order.'; return; }
+    w.done = true; save(); msg.textContent = '';
+    document.getElementById('riddleread').classList.add('show');
+    document.getElementById('p3answer').innerHTML = answerBar(3, 'Art that will not stay inside the frame');
+    wireAnswerBar(3);
+    toast('The slate reads clean. Now answer the riddle.');
+  });
+  if(w.done || S.solved[3]) wireAnswerBar(3);
+};
+
+/* ==================================================================
+   PANEL 4 — THE REBUS CARD BOX
+   ================================================================== */
+var PIC = {
+  peach:'<svg width="56" height="56" viewBox="0 0 60 60"><circle cx="30" cy="34" r="19" fill="#f0a072" stroke="#17140f" stroke-width="2.6"/><path d="M30 17c-5 8-5 26 0 34" fill="none" stroke="#c46a3e" stroke-width="2"/><path d="M31 16c3-6 10-8 14-6-2 6-8 9-14 6z" fill="#6f8f4a" stroke="#17140f" stroke-width="2.2"/></svg>',
+  pan:'<svg width="60" height="46" viewBox="0 0 68 46"><ellipse cx="24" cy="26" rx="20" ry="14" fill="#3b332a" stroke="#17140f" stroke-width="2.6"/><ellipse cx="24" cy="23" rx="15" ry="9.5" fill="#5c5245"/><rect x="42" y="22" width="24" height="7" rx="3" fill="#302820" stroke="#17140f" stroke-width="2.4"/></svg>',
+  ball:'<svg width="52" height="52" viewBox="0 0 56 56"><circle cx="28" cy="28" r="21" fill="#d6402c" stroke="#17140f" stroke-width="2.6"/><path d="M7 28h42M28 7c9 7 9 35 0 42M28 7c-9 7-9 35 0 42" fill="none" stroke="#17140f" stroke-width="2"/><circle cx="21" cy="20" r="4" fill="#f1e3c8" opacity=".5"/></svg>',
+  moon:'<svg width="50" height="52" viewBox="0 0 54 56"><path d="M34 4a26 26 0 1 0 0 48A30 30 0 0 1 34 4z" fill="#e3a723" stroke="#17140f" stroke-width="2.6"/><circle cx="19" cy="20" r="3" fill="#b8801a"/><circle cx="15" cy="34" r="2.2" fill="#b8801a"/></svg>',
+  cap:'<svg width="58" height="44" viewBox="0 0 64 44"><path d="M10 28a20 20 0 0 1 40 0z" fill="#2f9fd0" stroke="#17140f" stroke-width="2.6"/><path d="M8 28h48c4 0 6 6 0 6H10c-4 0-4-6-2-6z" fill="#1c6b8f" stroke="#17140f" stroke-width="2.6"/><circle cx="30" cy="10" r="3" fill="#17140f"/></svg>',
+  lion:'<svg width="56" height="56" viewBox="0 0 60 60"><g fill="#c98a2e" stroke="#17140f" stroke-width="2.2"><path d="M30 4l6 8 9-5 1 10 10 3-6 8 6 8-10 3-1 10-9-5-6 8-6-8-9 5-1-10-10-3 6-8-6-8 10-3 1-10 9 5z"/></g><circle cx="30" cy="30" r="15" fill="#e8b45e" stroke="#17140f" stroke-width="2.4"/><g fill="#17140f"><circle cx="25" cy="27" r="2.1"/><circle cx="35" cy="27" r="2.1"/><path d="M30 33l4 3-4 3-4-3z"/></g><path d="M22 39c3 3 13 3 16 0" fill="none" stroke="#17140f" stroke-width="2"/></svg>',
+  sun:'<svg width="54" height="54" viewBox="0 0 58 58"><g stroke="#e3a723" stroke-width="3.4" stroke-linecap="round"><path d="M29 3v8M29 47v8M3 29h8M47 29h8M11 11l6 6M41 41l6 6M47 11l-6 6M17 41l-6 6"/></g><circle cx="29" cy="29" r="14" fill="#e3a723" stroke="#17140f" stroke-width="2.6"/></svg>',
+  shoe:'<svg width="62" height="42" viewBox="0 0 68 42"><path d="M6 30c0-8 2-16 8-16 5 0 6 5 11 7 6 2 16 1 24 6 5 3 12 3 12 6v3H8a2 2 0 0 1-2-2z" fill="#f1e3c8" stroke="#17140f" stroke-width="2.6"/><path d="M6 32h55v4H8a2 2 0 0 1-2-2z" fill="#302820" stroke="#17140f" stroke-width="2.4"/><path d="M16 16l7 5M20 13l7 6" stroke="#17140f" stroke-width="2"/></svg>'
+};
+var REBUS = [
+  { pics:['peach'], ops:[], math:'S &nbsp;+&nbsp; [picture] &nbsp;&middot;&nbsp; a = e', total:8,  key:0, word:'SPEECH'  },
+  { pics:['pan'],   ops:[], math:'[picture] &nbsp;+&nbsp; "el"',                  total:7,  key:0, word:'PANEL'   },
+  { pics:['ball','moon'], ops:['+'], math:'[picture 1] &nbsp;+&nbsp; [picture 2] &nbsp;&minus;&nbsp; m', total:9, key:2, word:'BALLOON' },
+  { pics:['cap','lion'],  ops:['+'], math:'[picture 1] &nbsp;+&nbsp; [picture 2] &nbsp;&middot;&nbsp; l = t', total:9, key:1, word:'CAPTION' },
+  { pics:['sun'],   ops:[], math:'[picture] &nbsp;+&nbsp; "d" &nbsp;&middot;&nbsp; u = ou', total:7, key:0, word:'SOUND' },
+  { pics:['shoe'],  ops:[], math:'[picture] &nbsp;&minus;&nbsp; e &nbsp;+&nbsp; "t"', total:6, key:1, word:'SHOT' }
+];
+
+BUILDERS[4] = function(){
+  var w = work(4, {words:['','','','','','']});
+  var h = briefing('Caption &middot; Task four',
+    'Odessa taught the studio&rsquo;s interns with rebus cards: a picture plus a little letter arithmetic. '+
+    'Say the picture out loud, apply the maths, and you get a term from your handbook.',
+    ['Type each answer into its card. Letters drop into the boxes as you type; some boxes stay empty.',
+     'Every one of the six answers is a graphic-novel term you have already studied.',
+     'Read the six <b>shaded</b> boxes in card order, 1 through 6. That is your codex ingredient.']);
+  h += '<div class="rebus-grid">';
+  for(var i=0;i<REBUS.length;i++){
+    var c = REBUS[i], val = w.words[i] || '';
+    var ok = matches(val, c.word);
+    h += '<div class="rcard" data-ok="'+(ok?1:0)+'" data-i="'+i+'">'+
+         '<div class="rhd">Card '+(i+1)+'<span>'+c.total+' boxes</span></div>'+
+         '<div class="rart">';
+    for(var j=0;j<c.pics.length;j++){
+      if(j>0) h += '<span class="op">+</span>';
+      h += PIC[c.pics[j]];
+    }
+    h += '</div><div class="mathline">'+c.math+'</div>'+
+         boxRow(ok?c.word:norm(val), c.total, c.key)+
+         '<input class="word" type="text" autocomplete="off" spellcheck="false" placeholder="ANSWER" value="'+esc(val)+'"></div>';
+  }
+  h += '</div>';
+  h += '<div class="keystrip" id="keystrip"></div>';
+  h += answerBar(4, 'Six shaded letters &mdash; one panel, the whole page');
+  return h;
+};
+
+WIRES[4] = function(){
+  var w = S.work[4];
+  function paint(){
+    var h = '<span class="kl">Key strip</span>', i, got = '';
+    for(i=0;i<REBUS.length;i++){
+      var c = REBUS[i], ok = matches(w.words[i], c.word);
+      var ch = ok ? c.word.charAt(c.key) : '';
+      if(ok) got += ch;
+      h += '<span class="lbox key">'+ch+'</span>';
+    }
+    h += '<span style="font-family:var(--font-tech); font-size:.68rem; color:#cdb98f; margin-left:9px">'+
+         got.length+' of 6 cards solved</span>';
+    document.getElementById('keystrip').innerHTML = h;
+  }
+  paint();
+  sheetBody.addEventListener('input', function(ev){
+    var inp = ev.target.closest('input.word'); if(!inp) return;
+    var card = inp.closest('.rcard'), i = parseInt(card.getAttribute('data-i'),10), c = REBUS[i];
+    w.words[i] = inp.value; save();
+    var ok = matches(inp.value, c.word);
+    card.setAttribute('data-ok', ok ? 1 : 0);
+    var boxes = card.querySelector('.boxes');
+    boxes.outerHTML = boxRow(ok ? c.word : norm(inp.value), c.total, c.key);
+    paint();
+  });
+  wireAnswerBar(4);
+};
+
+/* ==================================================================
+   PANEL 5 — THE BLUE-LINE BOARD
+   ================================================================== */
+var BOARD = {
+  black:{ '0,2':{L:'T',g:6}, '1,0':{L:'A',g:2}, '2,4':{L:'O',g:4},
+          '3,1':{L:'L',g:1}, '4,5':{L:'U',g:5}, '5,3':{L:'Y',g:3} },
+  blue:['R','E','K','S','M','N','I','D','P','H','C','W','V','B','F','J','Q','X','Z','G','T','A','O','L','U','Y','E','R','N','S']
+};
+
+BUILDERS[5] = function(){
+  var w = work(5, {nonrepro:false, guides:false});
+  var h = briefing('Caption &middot; Task five',
+    'Pencillers rough out a page in <b>non-repro blue</b> &mdash; a pencil the reproduction camera simply cannot see. '+
+    'Odessa hid six graphite letters in a field of blue ones, then numbered the drafting guides she seated them in.',
+    ['Throw the <b>non-repro blue filter</b>. Anything drawn in blue drops out of the plate; only graphite survives.',
+     'Reading order is a trap. Turn on the <b>drafting guides</b> to see which numbered box each surviving letter sits in.',
+     'Sort the six letters by guide number, 1 through 6. That spells the arrangement of panels on a page.']);
+  h += '<h3 class="blk">Drafting Plate 6 &times; 6</h3>'+
+       '<div class="board-tools">'+
+       '<button class="toggle'+(w.nonrepro?' on':'')+'" id="t-nr"><i></i>Non-repro blue filter</button>'+
+       '<button class="toggle'+(w.guides?' on':'')+'" id="t-gd"><i></i>Drafting guides</button></div>'+
+       '<div class="dboard screened" id="dboard"></div>'+
+       '<p style="font-family:var(--font-tech); font-size:.74rem; margin-top:11px; line-height:1.7" id="dbmsg"></p>'+
+       answerBar(5, 'Six letters &mdash; how the panels are arranged on a page');
+  return h;
+};
+
+WIRES[5] = function(){
+  var w = S.work[5];
+  var board = document.getElementById('dboard');
+  function paint(){
+    var h = '', bi = 0;
+    for(var r=0;r<6;r++){ for(var c=0;c<6;c++){
+      var k = r+','+c, b = BOARD.black[k];
+      if(b){ h += '<div class="dcell black"><span class="gn">'+b.g+'</span>'+b.L+'</div>'; }
+      else { h += '<div class="dcell blue">'+BOARD.blue[bi++ % BOARD.blue.length]+'</div>'; }
+    }}
+    board.innerHTML = h;
+    board.classList.toggle('nonrepro', !!w.nonrepro);
+    board.classList.toggle('guides', !!w.guides);
+    document.getElementById('t-nr').classList.toggle('on', !!w.nonrepro);
+    document.getElementById('t-gd').classList.toggle('on', !!w.guides);
+    var m = document.getElementById('dbmsg');
+    if(!w.nonrepro) m.innerHTML = 'The plate is unusable &mdash; thirty-six letters and no way to tell ink from rough.';
+    else if(!w.guides) m.innerHTML = 'Six graphite letters survive. Reading across, they say <b>T A O L U Y</b> &mdash; which is not a word. Something orders them.';
+    else m.innerHTML = 'Each surviving letter is seated in a numbered drafting guide. Read them <b>1 &rarr; 6</b>.';
+  }
+  paint();
+  document.getElementById('t-nr').addEventListener('click', function(){ w.nonrepro = !w.nonrepro; save(); paint(); });
+  document.getElementById('t-gd').addEventListener('click', function(){ w.guides = !w.guides; save(); paint(); });
+  wireAnswerBar(5);
+};
+
+/* ==================================================================
+   PANEL 6 — THE PROOFING GALLEY
+   ================================================================== */
+var MEMO = 'Studio 9 — night-shift production memo, from the desk of O. Krahl. '+
+  'Page four: the {{forground}} is still reading flat, so push the coloration warmer before it goes to the letterer. '+
+  'The {{naratour}} box on the splash page has been reset twice already — leave it alone. '+
+  'Keep every sound effect in the display font; {{onomatopeia}} is the whole point of that beat, and a quiet BOOM is a wasted panel. '+
+  'The {{moshun}} lines on the chase sequence must follow the figure, not the gutter. '+
+  'Finally, the {{prespective}} in the extreme long shot is off by a full horizon. '+
+  'Rule it again in non-repro blue before you ink, and mind the bleed on the recto.';
+var FIX = [
+  { bad:'forground',   word:'FOREGROUND',   total:12, key:0 },
+  { bad:'naratour',    word:'NARRATOR',     total:10, key:2 },
+  { bad:'onomatopeia', word:'ONOMATOPOEIA', total:14, key:4 },
+  { bad:'moshun',      word:'MOTION',       total:8,  key:0 },
+  { bad:'prespective', word:'PERSPECTIVE',  total:13, key:1 }
+];
+function memoTokens(){
+  var raw = MEMO.split(/\s+/), out = [];
+  for(var i=0;i<raw.length;i++){
+    var t = raw[i], m = t.match(/^\{\{(.+?)\}\}([.,;—]?)$/);
+    if(m) out.push({ text:m[1], tail:m[2]||'', bad:true });
+    else out.push({ text:t, tail:'', bad:false });
+  }
+  return out;
+}
+
+BUILDERS[6] = function(){
+  var w = work(6, {flags:{}, marked:false, fixes:['','','','','']});
+  var toks = memoTokens();
+  var h = briefing('Caption &middot; Task six',
+    'Five production terms in tonight&rsquo;s memo are misspelled. The letterpress will set whatever you hand it, '+
+    'so the galley has to be clean before it goes downstairs.',
+    ['Click a word in the galley to flag it. Click it again to unflag. Flag exactly the five misspelled terms.',
+     'Hit <b>Mark Up The Galley</b>. If your flags are right, five correction lines open below.',
+     'Spell each correction out in full, then read the five <b>shaded</b> boxes top to bottom. It is the border around a panel.']);
+  h += '<h3 class="blk">Galley Proof &mdash; Uncorrected</h3><div class="galley" id="galley">';
+  for(var i=0;i<toks.length;i++){
+    h += '<span class="w" data-i="'+i+'">'+esc(toks[i].text)+'</span>'+esc(toks[i].tail)+' ';
+  }
+  h += '</div><div style="margin-top:13px; display:flex; gap:9px; flex-wrap:wrap; align-items:center">'+
+       '<button class="btn" id="gmark">Mark Up The Galley</button>'+
+       '<button class="btn ghost sm" id="gclear">Clear Flags</button>'+
+       '<span class="strikes" id="gmsg"></span></div>';
+  h += '<div id="fixzone"></div>';
+  h += '<div id="p6answer"></div>';
+  return h;
+};
+
+WIRES[6] = function(){
+  var w = S.work[6];
+  var toks = memoTokens();
+  var galley = document.getElementById('galley');
+  var msg = document.getElementById('gmsg');
+
+  function paintFlags(){
+    var spans = galley.querySelectorAll('.w');
+    for(var i=0;i<spans.length;i++){
+      spans[i].className = 'w' + (w.flags[i] ? ' flagged' : '');
+    }
+  }
+  function badIndexes(){
+    var out = [];
+    for(var i=0;i<toks.length;i++){ if(toks[i].bad) out.push(i); }
+    return out;
+  }
+  function keyStripHTML(){
+    var h = '<span class="kl">Key strip</span>', got = 0;
+    for(var i=0;i<FIX.length;i++){
+      var ok = matches(w.fixes[i], FIX[i].word);
+      if(ok) got++;
+      h += '<span class="lbox key">'+(ok ? FIX[i].word.charAt(FIX[i].key) : '')+'</span>';
+    }
+    return h + '<span style="font-family:var(--font-tech); font-size:.68rem; color:#cdb98f; margin-left:9px">'+
+           got+' of 5 corrected</span>';
+  }
+  function paintFixes(){
+    var h = '<h3 class="blk">Corrections</h3>';
+    for(var i=0;i<FIX.length;i++){
+      var f = FIX[i], val = w.fixes[i]||'', ok = matches(val, f.word);
+      h += '<div class="fixrow" data-i="'+i+'" data-ok="'+(ok?1:0)+'">'+
+           '<span class="bad">'+f.bad+'</span>'+
+           '<span class="fixin"><input type="text" autocomplete="off" spellcheck="false" placeholder="CORRECT SPELLING" value="'+esc(val)+'">'+
+           boxRow(ok?f.word:norm(val), f.total, f.key)+'</span></div>';
+    }
+    h += '<div class="keystrip" id="gkey">'+keyStripHTML()+'</div>';
+    document.getElementById('fixzone').innerHTML = h;
+    document.getElementById('p6answer').innerHTML = answerBar(6, 'Five shaded letters &mdash; the border around a panel');
+    wireAnswerBar(6);
+  }
+
+  paintFlags();
+  if(w.marked || S.solved[6]) paintFixes();
+  else document.getElementById('p6answer').innerHTML =
+    '<div class="door-locked-note" style="margin-top:20px">The correction lines open once the galley is marked up correctly.</div>';
+
+  galley.addEventListener('click', function(ev){
+    var s = ev.target.closest('.w'); if(!s) return;
+    var i = parseInt(s.getAttribute('data-i'),10);
+    if(w.flags[i]) delete w.flags[i]; else w.flags[i] = 1;
+    save(); paintFlags();
+  });
+  document.getElementById('gclear').addEventListener('click', function(){ w.flags = {}; save(); paintFlags(); msg.textContent=''; });
+  document.getElementById('gmark').addEventListener('click', function(){
+    var want = badIndexes(), have = Object.keys(w.flags).map(Number).sort(function(a,b){return a-b;});
+    var wrong = 0, found = 0;
+    for(var i=0;i<have.length;i++){ if(want.indexOf(have[i])>-1) found++; else wrong++; }
+    if(found === want.length && wrong === 0){
+      w.marked = true; save(); msg.textContent = '';
+      paintFixes(); toast('Galley marked. Five corrections to set.');
+      return;
+    }
+    msg.innerHTML = found+' of 5 misspellings found'+(wrong ? ', and '+wrong+' correctly spelled word'+(wrong===1?'':'s')+' flagged by mistake' : '')+'.';
+  });
+
+  sheetBody.addEventListener('input', function(ev){
+    var inp = ev.target.closest('.fixrow input'); if(!inp) return;
+    var row = inp.closest('.fixrow'), i = parseInt(row.getAttribute('data-i'),10), f = FIX[i];
+    w.fixes[i] = inp.value; save();
+    var ok = matches(inp.value, f.word);
+    row.setAttribute('data-ok', ok?1:0);
+    row.querySelector('.boxes').outerHTML = boxRow(ok?f.word:norm(inp.value), f.total, f.key);
+    document.getElementById('gkey').innerHTML = keyStripHTML();
+  });
+};
+
+/* ==================================================================
+   PANEL 7 — THE LENS RACK
+   ================================================================== */
+function shotSVG(k){
+  var frame = '<rect x="2" y="2" width="96" height="116" fill="#f6ecd6" stroke="#17140f" stroke-width="3"/>';
+  var sky = '<rect x="5" y="5" width="90" height="110" fill="#bfe0ef"/>';
+  var skin = '#c98a5e', hair = '#302820';
+  if(k===0) return '<svg viewBox="0 0 100 120">'+frame+'<rect x="5" y="5" width="90" height="110" fill="'+skin+'"/>'+
+    '<ellipse cx="50" cy="60" rx="40" ry="24" fill="#f6ecd6" stroke="#17140f" stroke-width="3"/>'+
+    '<circle cx="50" cy="60" r="17" fill="#6f8f4a" stroke="#17140f" stroke-width="2.5"/>'+
+    '<circle cx="50" cy="60" r="7" fill="#17140f"/><circle cx="44" cy="54" r="3.4" fill="#f6ecd6"/>'+
+    '<path d="M8 40q42-26 84 0" fill="none" stroke="'+hair+'" stroke-width="6"/></svg>';
+  if(k===1) return '<svg viewBox="0 0 100 120">'+frame+sky+
+    '<ellipse cx="50" cy="66" rx="34" ry="42" fill="'+skin+'" stroke="#17140f" stroke-width="3"/>'+
+    '<path d="M16 46q34-34 68 0q-6-32-34-32T16 46z" fill="'+hair+'" stroke="#17140f" stroke-width="3"/>'+
+    '<g fill="#17140f"><ellipse cx="38" cy="62" rx="5" ry="6"/><ellipse cx="62" cy="62" rx="5" ry="6"/></g>'+
+    '<path d="M50 70v10M38 92q12 8 24 0" fill="none" stroke="#17140f" stroke-width="3"/></svg>';
+  if(k===2) return '<svg viewBox="0 0 100 120">'+frame+sky+
+    '<path d="M18 120q4-30 32-30t32 30z" fill="#d6402c" stroke="#17140f" stroke-width="3"/>'+
+    '<ellipse cx="50" cy="56" rx="23" ry="29" fill="'+skin+'" stroke="#17140f" stroke-width="3"/>'+
+    '<path d="M27 44q23-24 46 0q-4-23-23-23T27 44z" fill="'+hair+'" stroke="#17140f" stroke-width="3"/>'+
+    '<g fill="#17140f"><circle cx="41" cy="54" r="3.2"/><circle cx="59" cy="54" r="3.2"/></g>'+
+    '<path d="M42 70q8 5 16 0" fill="none" stroke="#17140f" stroke-width="2.6"/></svg>';
+  if(k===3) return '<svg viewBox="0 0 100 120">'+frame+sky+
+    '<path d="M24 120V74q0-16 26-16t26 16v46z" fill="#d6402c" stroke="#17140f" stroke-width="3"/>'+
+    '<path d="M24 82h52" stroke="#17140f" stroke-width="2"/>'+
+    '<ellipse cx="50" cy="40" rx="16" ry="20" fill="'+skin+'" stroke="#17140f" stroke-width="3"/>'+
+    '<path d="M34 32q16-17 32 0q-3-16-16-16T34 32z" fill="'+hair+'" stroke="#17140f" stroke-width="2.6"/>'+
+    '<g fill="#17140f"><circle cx="44" cy="39" r="2.3"/><circle cx="56" cy="39" r="2.3"/></g>'+
+    '<path d="M12 120q6-22 18-26M88 120q-6-22-18-26" fill="none" stroke="#17140f" stroke-width="3"/></svg>';
+  if(k===4) return '<svg viewBox="0 0 100 120">'+frame+sky+
+    '<rect x="5" y="98" width="90" height="17" fill="#9a958c"/>'+
+    '<ellipse cx="50" cy="26" rx="10" ry="12" fill="'+skin+'" stroke="#17140f" stroke-width="2.5"/>'+
+    '<path d="M40 21q10-11 20 0q-2-10-10-10t-10 10z" fill="'+hair+'"/>'+
+    '<path d="M38 40q12-6 24 0l5 32H33z" fill="#d6402c" stroke="#17140f" stroke-width="2.5"/>'+
+    '<path d="M38 72l-3 28h9l4-20 4 20h9l-3-28z" fill="#2f9fd0" stroke="#17140f" stroke-width="2.5"/>'+
+    '<path d="M38 42L26 64M62 42l12 22" stroke="#17140f" stroke-width="3" fill="none"/></svg>';
+  if(k===5) return '<svg viewBox="0 0 100 120">'+frame+sky+
+    '<g fill="#8f8a80" stroke="#17140f" stroke-width="2"><rect x="6" y="28" width="22" height="62"/><rect x="30" y="16" width="18" height="74"/><rect x="72" y="24" width="22" height="66"/></g>'+
+    '<g fill="#e3a723" opacity=".85"><rect x="10" y="34" width="5" height="6"/><rect x="19" y="34" width="5" height="6"/><rect x="10" y="46" width="5" height="6"/><rect x="19" y="46" width="5" height="6"/><rect x="34" y="24" width="5" height="6"/><rect x="41" y="24" width="5" height="6"/><rect x="76" y="32" width="5" height="6"/><rect x="85" y="32" width="5" height="6"/></g>'+
+    '<rect x="5" y="90" width="90" height="25" fill="#9a958c"/>'+
+    '<g stroke="#17140f" stroke-width="2" fill="'+skin+'"><circle cx="55" cy="76" r="4"/></g>'+
+    '<path d="M55 80v12M49 84l6-4 6 4M51 104l4-12 4 12" stroke="#17140f" stroke-width="2.4" fill="none"/>'+
+    '<path d="M5 98h90" stroke="#f6ecd6" stroke-width="2" stroke-dasharray="7 6"/></svg>';
+  return '<svg viewBox="0 0 100 120">'+frame+
+    '<rect x="5" y="5" width="90" height="70" fill="#e3a723" opacity=".5"/>'+
+    '<rect x="5" y="75" width="90" height="40" fill="#9a958c"/>'+
+    '<g fill="#3b332a" stroke="#17140f" stroke-width="1.6">'+
+    '<rect x="7" y="44" width="12" height="32"/><rect x="21" y="32" width="10" height="44"/><rect x="33" y="52" width="13" height="24"/>'+
+    '<rect x="48" y="26" width="11" height="50"/><rect x="61" y="46" width="14" height="30"/><rect x="77" y="36" width="12" height="40"/></g>'+
+    '<g fill="#e3a723" opacity=".9"><rect x="23" y="38" width="3" height="4"/><rect x="50" y="32" width="3" height="4"/><rect x="80" y="42" width="3" height="4"/><rect x="10" y="50" width="3" height="4"/></g>'+
+    '<g stroke="#17140f" stroke-width="1.4" fill="'+skin+'"><circle cx="50" cy="94" r="2"/></g>'+
+    '<path d="M50 96v6M47 98l3-2 3 2M48 108l2-6 2 6" stroke="#17140f" stroke-width="1.4" fill="none"/></svg>';
+}
+var SHOTS = [
+  { L:'C', lab:'Extreme close up' }, { L:'L', lab:'Close up' },
+  { L:'O', lab:'Medium close up' },  { L:'S', lab:'Medium shot' },
+  { L:'E', lab:'Full shot' },        { L:'U', lab:'Long shot' },
+  { L:'P', lab:'Extreme long shot' }
+];
+var SHOT_POOL = [5,1,6,3,0,4,2];
+
+BUILDERS[7] = function(){
+  var w = work(7, {bays:[null,null,null,null,null,null,null], done:false});
+  var h = briefing('Caption &middot; Task seven',
+    'Seven reference plates fell out of the shot-distance folder. The rack loads tightest first: the lens that '+
+    'puts the reader almost inside the character goes in bay 1, the one that puts them across the city goes in bay 7.',
+    ['Click a plate to load it into the next empty bay. Click a loaded bay to pull the plate back out.',
+     'A <b>close up</b> conveys emotion; a <b>long shot</b> shows setting. The plates in between grade from one to the other.',
+     'Once all seven bays are loaded, hit <b>Seat The Rack</b>. The letters, read bay 1 to bay 7, give your ingredient.']);
+  h += '<h3 class="blk">Loose Plates</h3><div class="lens-pool" id="lpool"></div>'+
+       '<h3 class="blk">The Rack &mdash; Bay 1 (tightest) &rarr; Bay 7 (widest)</h3><div class="rack" id="lrack"></div>'+
+       '<div style="margin-top:13px; display:flex; gap:9px; flex-wrap:wrap; align-items:center">'+
+       '<button class="btn" id="lseat">Seat The Rack</button>'+
+       '<button class="btn ghost sm" id="lclear">Unload</button>'+
+       '<span class="strikes" id="lmsg"></span></div>';
+  h += '<div id="p7answer">'+ (w.done || S.solved[7] ? answerBar(7, 'Seven letters &mdash; the shot that conveys emotion') :
+       '<div class="door-locked-note" style="margin-top:20px">The keyword field opens once the rack is seated in the right order.</div>') +'</div>';
+  return h;
+};
+
+WIRES[7] = function(){
+  var w = S.work[7];
+  var pool = document.getElementById('lpool'), rack = document.getElementById('lrack');
+  var msg = document.getElementById('lmsg');
+  function paint(){
+    var h = '', i, k;
+    for(i=0;i<SHOT_POOL.length;i++){
+      k = SHOT_POOL[i];
+      var used = w.bays.indexOf(k) > -1;
+      h += '<button class="lens'+(used?' used':'')+'" data-k="'+k+'"'+(used?' disabled':'')+'>'+
+           shotSVG(k)+'<span class="ll">'+SHOTS[k].lab+'</span></button>';
+    }
+    pool.innerHTML = h;
+    h = '';
+    for(i=0;i<7;i++){
+      k = w.bays[i];
+      h += '<div class="bay'+(k!==null?' full':'')+'" data-at="'+i+'">'+
+           (k!==null ? shotSVG(k)+'<span class="bl">'+SHOTS[k].L+'</span>' : '<span class="bn">'+(i+1)+'</span>')+'</div>';
+    }
+    rack.innerHTML = h;
+  }
+  paint();
+  pool.addEventListener('click', function(ev){
+    var b = ev.target.closest('.lens'); if(!b || b.classList.contains('used')) return;
+    for(var i=0;i<7;i++){ if(w.bays[i]===null){ w.bays[i] = parseInt(b.getAttribute('data-k'),10); break; } }
+    save(); paint();
+  });
+  rack.addEventListener('click', function(ev){
+    var d = ev.target.closest('.bay'); if(!d) return;
+    var at = parseInt(d.getAttribute('data-at'),10);
+    if(w.bays[at]===null) return;
+    w.bays[at] = null;
+    var packed = []; for(var i=0;i<7;i++){ if(w.bays[i]!==null) packed.push(w.bays[i]); }
+    while(packed.length<7) packed.push(null);
+    w.bays = packed; save(); paint();
+  });
+  document.getElementById('lclear').addEventListener('click', function(){
+    w.bays = [null,null,null,null,null,null,null]; save(); paint(); msg.textContent='';
+  });
+  document.getElementById('lseat').addEventListener('click', function(){
+    for(var i=0;i<7;i++){ if(w.bays[i]===null){ msg.textContent='Bay '+(i+1)+' is still empty.'; return; } }
+    for(i=0;i<7;i++){
+      if(w.bays[i]!==i){ msg.textContent='Bay '+(i+1)+' is holding the wrong plate. Tightest framing first.'; return; }
+    }
+    w.done = true; save(); msg.textContent='';
+    document.getElementById('p7answer').innerHTML = answerBar(7, 'Seven letters &mdash; the shot that conveys emotion');
+    wireAnswerBar(7);
+    toast('Rack seated. Read the letters, bay 1 to bay 7.');
+  });
+  if(w.done || S.solved[7]) wireAnswerBar(7);
+};
+
+/* ==================================================================
+   PANEL 8 — THE COLOURIST'S RACK
+   ================================================================== */
+var TUBES = [
+  { n:'RED',    hex:'#d6402c', L:'O' }, { n:'ORANGE', hex:'#e8862a', L:'K' },
+  { n:'YELLOW', hex:'#e3a723', L:'R' }, { n:'GREEN',  hex:'#6f8f4a', L:'A' },
+  { n:'BLUE',   hex:'#2f9fd0', L:'N' }, { n:'PURPLE', hex:'#7b4f9d', L:'B' },
+  { n:'BLACK',  hex:'#302820', L:'S' }, { n:'WHITE',  hex:'#f6ecd6', L:'O' },
+  { n:'BROWN',  hex:'#8a6038', L:'L' }, { n:'GREY',   hex:'#9a958c', L:'L' },
+  { n:'PINK',   hex:'#e08fb0', L:'T' }
+];
+var MOODS = [
+  { c:'PURPLE', t:'royal, knowledgeable, creative' },
+  { c:'GREEN',  t:'nature, growth, safe, harmonious, mystic' },
+  { c:'BROWN',  t:'grounded, earthy, gritty' },
+  { c:'GREY',   t:'ambiguous, smoky, mechanical, cold' },
+  { c:'RED',    t:'bold, energetic, passionate, determined' },
+  { c:'WHITE',  t:'spacious, eternal, pure' },
+  { c:'BLUE',   t:'deep, stable, knowing, trustworthy, confident' }
+];
+var BTYPES = ['SPEECH','THOUGHT','WHISPER','BURST','RADIO','TELEPATHIC'];
+function balloonSVG(k){
+  var W = '<svg width="128" height="82" viewBox="0 0 128 82">';
+  if(k===0) return W+'<path d="M10 8h108v46H62l-16 20 4-20H10z" fill="#f6ecd6" stroke="#17140f" stroke-width="3" stroke-linejoin="round"/>'+
+    '<text x="64" y="38" font-family="Impact, sans-serif" font-size="16" fill="#17140f" text-anchor="middle">HELLO!</text></svg>';
+  if(k===1) return W+'<path d="M30 14q-16 0-16 12t14 12q-4 14 12 14 4 10 18 4 10 10 22 0 16 4 16-12 14-4 10-18-2-14-18-12-6-12-20-6-10-10-24 2-8-4-14 4z" fill="#f6ecd6" stroke="#17140f" stroke-width="3"/>'+
+    '<circle cx="34" cy="64" r="6" fill="#f6ecd6" stroke="#17140f" stroke-width="2.6"/><circle cx="22" cy="74" r="3.6" fill="#f6ecd6" stroke="#17140f" stroke-width="2.4"/>'+
+    '<text x="66" y="42" font-family="Impact, sans-serif" font-size="14" fill="#17140f" text-anchor="middle">MAYBE&hellip;</text></svg>';
+  if(k===2) return W+'<ellipse cx="64" cy="34" rx="54" ry="26" fill="#f6ecd6" stroke="#17140f" stroke-width="2.6" stroke-dasharray="7 6"/>'+
+    '<path d="M50 58l-8 20 20-16" fill="#f6ecd6" stroke="#17140f" stroke-width="2.6" stroke-dasharray="6 5"/>'+
+    '<text x="64" y="40" font-family="Impact, sans-serif" font-size="14" fill="#6b655c" text-anchor="middle">psst&hellip;</text></svg>';
+  if(k===3) return W+'<path d="M64 2l9 12 14-8-1 16 16 2-9 13 13 9-15 6 6 14-16-2-3 16-14-9-14 9-3-16-16 2 6-14-15-6 13-9-9-13 16-2-1-16 14 8z" fill="#e3a723" stroke="#17140f" stroke-width="3"/>'+
+    '<text x="64" y="47" font-family="Impact, sans-serif" font-size="17" fill="#17140f" text-anchor="middle">BLAM!</text></svg>';
+  if(k===4) return W+'<path d="M22 10l6 8-6 8 6 8-6 8 6 8-6 6h92V10z" fill="#f6ecd6" stroke="#17140f" stroke-width="3" stroke-linejoin="round"/>'+
+    '<path d="M22 56l-14 6 10 4-8 12 22-16z" fill="#2f9fd0" stroke="#17140f" stroke-width="2.6"/>'+
+    '<text x="70" y="40" font-family="Impact, sans-serif" font-size="14" fill="#17140f" text-anchor="middle">COME IN&hellip;</text></svg>';
+  return W+'<ellipse cx="64" cy="34" rx="46" ry="24" fill="#f6ecd6" stroke="#17140f" stroke-width="3"/>'+
+    '<ellipse cx="64" cy="34" rx="52" ry="29" fill="none" stroke="#17140f" stroke-width="1.6"/>'+
+    '<g stroke="#7b4f9d" stroke-width="2.4" fill="none"><path d="M6 18q6 16 0 32M122 18q-6 16 0 32"/><path d="M52 62q6 8 12 0M64 62q6 8 12 0"/></g>'+
+    '<text x="64" y="40" font-family="Impact, sans-serif" font-size="13" fill="#17140f" text-anchor="middle">I KNOW.</text></svg>';
+}
+var BALLOON_POOL = [3,0,5,2,4,1];
+
+BUILDERS[8] = function(){
+  var w = work(8, {btypes:{}, moods:{}, calibrated:false});
+  var i, h = briefing('Caption &middot; Task eight',
+    'The colourist&rsquo;s rack is stencilled, but Odessa filed it behind a lettering test. Name the six balloons first; '+
+    'the rack letters come up once the shelf is identified. Then read the mood lines &mdash; every one is lifted '+
+    'straight from the handbook&rsquo;s coloration page.',
+    ['<b>Stage one:</b> label all six balloons by type. Solid oval with a pointed tail, scalloped cloud, dashed outline, jagged burst, broadcast box, mind-to-mind.',
+     '<b>Stage two:</b> match each mood line to its hue, then read the letter stencilled on that tube.',
+     'Seven letters in clue order. It is the shape that carries a character&rsquo;s voice.']);
+  h += '<h3 class="blk">Stage One &mdash; Lettering Test</h3><div class="balloon-grid">';
+  for(i=0;i<BALLOON_POOL.length;i++){
+    var k = BALLOON_POOL[i], pick = w.btypes[k] || '';
+    h += '<div class="bcard" data-k="'+k+'" data-ok="'+(pick===BTYPES[k]?1:0)+'">'+balloonSVG(k)+
+         '<select data-k="'+k+'"><option value="">&mdash; type &mdash;</option>';
+    for(var j=0;j<BTYPES.length;j++) h += '<option'+(pick===BTYPES[j]?' selected':'')+'>'+BTYPES[j]+'</option>';
+    h += '</select></div>';
+  }
+  h += '</div><p style="font-family:var(--font-tech); font-size:.74rem; margin-top:11px" id="bmsg"></p>';
+  h += '<h3 class="blk">The Rack</h3><div class="tube-rack" id="tuberack"></div>';
+  h += '<h3 class="blk">Stage Two &mdash; Mood Chart</h3>'+
+       '<table class="mood-tbl"><thead><tr><th>#</th><th>Mood the colour carries</th><th>Hue</th><th>Letter</th></tr></thead><tbody id="moodbody"></tbody></table>';
+  h += answerBar(8, 'Seven letters &mdash; the oval that carries a voice');
+  return h;
+};
+
+WIRES[8] = function(){
+  var w = S.work[8];
+  function balloonsDone(){
+    for(var k=0;k<6;k++){ if(w.btypes[k] !== BTYPES[k]) return false; }
+    return true;
+  }
+  function paintRack(){
+    var cal = balloonsDone(), h = '';
+    w.calibrated = cal; save();
+    for(var i=0;i<TUBES.length;i++){
+      var t = TUBES[i];
+      h += '<div class="tube"><svg width="34" height="62" viewBox="0 0 34 62">'+
+           '<rect x="11" y="2" width="12" height="9" fill="#9a958c" stroke="#17140f" stroke-width="2.2"/>'+
+           '<rect x="4" y="11" width="26" height="48" fill="'+t.hex+'" stroke="#17140f" stroke-width="2.4"/>'+
+           '<text x="17" y="42" font-family="Impact, sans-serif" font-size="17" fill="'+(t.n==='WHITE'||t.n==='YELLOW'?'#17140f':'#f1e3c8')+'" text-anchor="middle">'+
+           (cal ? t.L : '?')+'</text></svg>'+t.n+'</div>';
+    }
+    document.getElementById('tuberack').innerHTML = h;
+    document.getElementById('bmsg').innerHTML = cal
+      ? '<b style="color:#4a6b2c">Shelf identified.</b> The stencilled letters have come up on the rack.'
+      : 'The rack stays masked until all six balloons are named correctly.';
+  }
+  function paintMoods(){
+    var cal = balloonsDone(), h = '';
+    for(var i=0;i<MOODS.length;i++){
+      var m = MOODS[i], pick = w.moods[i] || '', ok = (pick === m.c);
+      h += '<tr data-i="'+i+'" data-ok="'+(ok?1:0)+'"><td style="font-family:var(--font-tech); font-weight:700">'+(i+1)+'</td>'+
+           '<td style="font-family:var(--font-serif); font-style:italic">'+m.t+'</td>'+
+           '<td><select data-m="'+i+'"><option value="">&mdash; choose a tube &mdash;</option>';
+      for(var j=0;j<TUBES.length;j++) h += '<option'+(pick===TUBES[j].n?' selected':'')+'>'+TUBES[j].n+'</option>';
+      h += '</select></td><td class="lt">'+(ok && cal ? tubeLetter(pick) : (pick ? (cal?tubeLetter(pick):'?') : '&middot;'))+'</td></tr>';
+    }
+    document.getElementById('moodbody').innerHTML = h;
+  }
+  function tubeLetter(name){
+    for(var i=0;i<TUBES.length;i++){ if(TUBES[i].n===name) return TUBES[i].L; }
+    return '&middot;';
+  }
+  paintRack(); paintMoods();
+
+  sheetBody.addEventListener('change', function(ev){
+    var sel = ev.target;
+    if(sel.tagName !== 'SELECT') return;
+    if(sel.hasAttribute('data-k')){
+      var k = parseInt(sel.getAttribute('data-k'),10);
+      w.btypes[k] = sel.value; save();
+      sel.closest('.bcard').setAttribute('data-ok', sel.value===BTYPES[k] ? 1 : 0);
+      paintRack(); paintMoods();
+    } else if(sel.hasAttribute('data-m')){
+      var i = parseInt(sel.getAttribute('data-m'),10);
+      w.moods[i] = sel.value; save();
+      paintMoods();
+    }
+  });
+  wireAnswerBar(8);
+};
+
+/* ==================================================================
+   PANEL 9 — THE FIVE-ROTOR CRYPTEX (linear climax)
+   ================================================================== */
+var ROTORS = [
+  { plq:'Panel 4 keyword<br>2nd letter', src:4, pos:1 },
+  { plq:'Panel 2 keyword<br>2nd letter', src:2, pos:1 },
+  { plq:'Panel 8 keyword<br>final letter', src:8, pos:-1 },
+  { plq:'Panel 6 keyword<br>final letter', src:6, pos:-1 },
+  { plq:'Panel 7 keyword<br>2nd letter', src:7, pos:1 }
+];
+
+BUILDERS[9] = function(){
+  var w = work(9, {dials:[0,0,0,0,0]});
+  var h = briefing('Caption &middot; The climax lock',
+    'This is the lock Odessa built last. It does not care about pictures or spelling &mdash; it only reads your '+
+    '<b>Studio Progress Master Codex</b>. Each brass plaque names one of the eight keywords you recovered and '+
+    'one letter position inside it.',
+    ['Pull the named keyword out of the codex on the right of the studio.',
+     'Count to the letter position on the plaque, then wind that rotor to that letter.',
+     'When all five drums read true, the readout below fills itself in. Log it to open the cryptex.']);
+  h += '<h3 class="blk">The Cryptex</h3><div class="cryptex" id="cryptex" data-open="'+(S.solved[9]?1:0)+'"></div>';
+  h += '<p style="font-family:var(--font-tech); font-size:.74rem; margin-top:12px; line-height:1.7">'+
+       'Recovered so far: ';
+  for(var i=1;i<=8;i++) h += '<b style="color:#1c6b8f">'+i+'</b>&nbsp;'+(S.solved[i]||'&mdash;')+'&nbsp;&nbsp;';
+  h += '</p>';
+  h += answerBar(9, 'Cryptex readout &mdash; set by the drums above');
+  return h;
+};
+
+WIRES[9] = function(){
+  var w = S.work[9];
+  var cx = document.getElementById('cryptex');
+  function readout(){
+    var s = '';
+    for(var i=0;i<5;i++) s += String.fromCharCode(65 + w.dials[i]);
+    return s;
+  }
+  function paint(){
+    var h = '', i;
+    for(i=0;i<5;i++){
+      var v = w.dials[i];
+      h += '<div class="rotor"><div class="plq">'+ROTORS[i].plq+'</div><div class="drum">'+
+           '<div class="pk">'+String.fromCharCode(65 + (v+25)%26)+'</div>'+
+           '<div class="win">'+String.fromCharCode(65 + v)+'</div>'+
+           '<div class="pk">'+String.fromCharCode(65 + (v+1)%26)+'</div></div>'+
+           '<div class="rb"><button data-d="'+i+'" data-s="-1">&#9650;</button>'+
+           '<button data-d="'+i+'" data-s="1">&#9660;</button></div></div>';
+    }
+    cx.innerHTML = h;
+    var inp = document.getElementById('ansin-9');
+    if(inp){ inp.value = readout(); }
+  }
+  var inp0 = document.getElementById('ansin-9');
+  if(inp0){ inp0.readOnly = true; inp0.setAttribute('aria-readonly','true'); }
+  paint();
+  cx.addEventListener('click', function(ev){
+    var b = ev.target.closest('button[data-d]'); if(!b) return;
+    var d = parseInt(b.getAttribute('data-d'),10), s = parseInt(b.getAttribute('data-s'),10);
+    w.dials[d] = (w.dials[d] + s + 26) % 26; save(); paint();
+  });
+  wireAnswerBar(9, function(){ cx.setAttribute('data-open','1'); });
+};
+
+/* ==================================================================
+   THE MASTER EXIT DOOR
+   ================================================================== */
+var DIAL_LABELS = [
+  'Letters in the<br>Panel 5 keyword',
+  'Letters in the<br>Panel 9 keyword',
+  'Letters in the<br>Panel 1 keyword',
+  'Letters in the<br>Panel 3 keyword'
+];
+var DOORSET = { dials:[0,0,0,0] };
+
+function renderDoor(){
+  var mount = document.getElementById('door-content');
+  var splash = document.getElementById('door-splash');
+  var chain = document.getElementById('door-chain');
+  var stampT = document.getElementById('door-stamp-text');
+  var i, h;
+
+  if(S.finished){
+    if(chain) chain.style.display = 'none';
+    if(stampT) stampT.textContent = 'OPEN';
+    var stamp = document.getElementById('door-stamp');
+    if(stamp) stamp.setAttribute('fill','#6f8f4a');
+    splash.setAttribute('data-open','1');
+    mount.innerHTML =
+      '<div class="caption-box">The bolts drop. Inkwell Lane is cold and orange under the streetlights, and the '+
+      'night&rsquo;s whole page &mdash; nine panels and one splash &mdash; is behind you. Odessa&rsquo;s note is '+
+      'taped to the outside of the door: <i>&ldquo;If you can read a page, you can build one.&rdquo;</i></div>'+
+      '<div style="display:flex; gap:9px; flex-wrap:wrap; margin-top:15px">'+
+      '<button class="btn" id="btn-cert">View Your Certificate</button></div>';
+    document.getElementById('btn-cert').addEventListener('click', openCert);
+    return;
+  }
+
+  if(!discoveryDone()){
+    mount.innerHTML = '<div class="door-locked-note"><b>Four brass dials and a keyword plate.</b><br>'+
+      'The dials are frozen. Eight studio panels are still shut &mdash; the door will not read a codex with holes in it. '+
+      '<span style="color:#1c6b8f">'+solvedCount()+' of 9 locks open.</span></div>';
+    return;
+  }
+  if(!S.solved[9]){
+    mount.innerHTML = '<div class="door-locked-note"><b>The dials have loosened.</b><br>'+
+      'Eight ingredients are in the codex, but the door still wants the cryptex word. '+
+      'Open <b>Panel 9 &mdash; The Five-Rotor Cryptex</b> first; it is the only lock that reads your whole codex at once.</div>';
+    return;
+  }
+
+  h = '<div class="caption-box">Engraved above the dials, in Odessa&rsquo;s own lettering:<br>'+
+      '<b>&ldquo;A page is counted before it is read. Set each dial to how many letters live in the keyword named on '+
+      'its plate, then letter the plate with the cryptex word.&rdquo;</b></div>';
+  h += '<div class="dials" id="door-dials"></div>';
+  h += '<div class="answer-bar" style="margin-top:4px">'+
+       '<div><label for="door-word">Keyword plate &mdash; the cryptex word</label>'+
+       '<input id="door-word" type="text" autocomplete="off" spellcheck="false" placeholder="TYPE THE KEYWORD"></div>'+
+       '<button class="btn" id="door-go">Throw The Bolts</button></div>'+
+       '<div class="verdict" id="door-verdict"></div>';
+  mount.innerHTML = h;
+
+  var dwrap = document.getElementById('door-dials');
+  function paintDials(){
+    var out = '';
+    for(var j=0;j<4;j++){
+      out += '<div class="dial"><div class="dl">'+DIAL_LABELS[j]+'</div>'+
+             '<div class="face">'+DOORSET.dials[j]+'</div>'+
+             '<div class="db"><button data-d="'+j+'" data-s="1">+</button>'+
+             '<button data-d="'+j+'" data-s="-1">&minus;</button></div></div>';
+    }
+    dwrap.innerHTML = out;
+  }
+  paintDials();
+  dwrap.addEventListener('click', function(ev){
+    var b = ev.target.closest('button[data-d]'); if(!b) return;
+    var d = parseInt(b.getAttribute('data-d'),10), s = parseInt(b.getAttribute('data-s'),10);
+    DOORSET.dials[d] = (DOORSET.dials[d] + s + 10) % 10;
+    paintDials();
+  });
+
+  var word = document.getElementById('door-word');
+  var verdict = document.getElementById('door-verdict');
+  function tryDoor(){
+    var okDials = true;
+    for(var j=0;j<4;j++){ if(DOORSET.dials[j] !== KEY.dials[j]) okDials = false; }
+    var okWord = matches(word.value, KEY.door);
+    if(okDials && okWord){
+      S.finished = Date.now(); save();
+      verdict.className = 'verdict good'; verdict.innerHTML = 'The bolts drop.';
+      splash.classList.add('shake');
+      toast('Master lock released. The studio door is open.', true);
+      setTimeout(function(){ splash.classList.remove('shake'); renderDoor(); renderCodex(); openCert(); }, 900);
+      return;
+    }
+    splash.classList.add('shake');
+    setTimeout(function(){ splash.classList.remove('shake'); }, 420);
+    verdict.className = 'verdict bad';
+    if(!okWord && !okDials) verdict.innerHTML = 'Nothing moves. The dials are wrong and so is the plate.';
+    else if(!okWord) verdict.innerHTML = 'The dials click into place &mdash; but the keyword plate is wrong.';
+    else verdict.innerHTML = 'The plate is right. One or more dials is off. Count the letters again.';
+  }
+  document.getElementById('door-go').addEventListener('click', tryDoor);
+  word.addEventListener('keydown', function(ev){ if(ev.key==='Enter') tryDoor(); });
+}
+
+/* ==================================================================
+   CERTIFICATE OF COMPLETION
+   ================================================================== */
+function verifyCode(){
+  var src = (S.name||'INTERN') + '|' + (S.started||0) + '|' + (S.finished||0) + '|';
+  for(var i=1;i<=9;i++) src += (S.solved[i]||'');
+  var hA = 5381, hB = 52711, i2;
+  for(i2=0;i2<src.length;i2++){
+    hA = ((hA * 33) ^ src.charCodeAt(i2)) >>> 0;
+    hB = ((hB * 31) + src.charCodeAt(i2) * 7) >>> 0;
+  }
+  function chunk(n){
+    var s = n.toString(36).toUpperCase().replace(/[^A-Z0-9]/g,'');
+    while(s.length < 4) s = '0' + s;
+    return s.slice(-4);
+  }
+  return 'GG-' + chunk(hA) + '-' + chunk(hB);
+}
+
+function openCert(){
+  var veil = document.getElementById('cert-veil');
+  var mount = document.getElementById('cert-mount');
+  var actions = document.getElementById('cert-actions');
+  veil.classList.add('open');
+
+  if(!S.name){
+    mount.innerHTML = '<div class="cert"><p class="ck">Gutter &amp; Glory Studio &middot; Studio 9</p>'+
+      '<h2>Sign The Plate</h2>'+
+      '<p class="of">The certificate is lettered by hand. It needs a name.</p>'+
+      '<div class="name-ask"><input id="cert-name" type="text" autocomplete="off" maxlength="46" placeholder="Your full name">'+
+      '<p class="nsub" style="margin-top:10px">This is printed on the certificate you hand your teacher.</p></div></div>';
+    actions.innerHTML = '<button class="btn" id="cert-sign">Letter It</button>'+
+                        '<button class="btn ghost" id="cert-skip">Skip &mdash; print unnamed</button>';
+    var inp = document.getElementById('cert-name');
+    inp.focus();
+    var sign = function(nm){ S.name = nm; save(); renderCodex(); openCert(); };
+    document.getElementById('cert-sign').addEventListener('click', function(){
+      var v = inp.value.replace(/\s+/g,' ').trim();
+      if(!v){ inp.focus(); return; }
+      sign(v);
+    });
+    document.getElementById('cert-skip').addEventListener('click', function(){ sign('—'); });
+    inp.addEventListener('keydown', function(ev){ if(ev.key==='Enter') document.getElementById('cert-sign').click(); });
+    return;
+  }
+
+  var elapsed = (S.finished || Date.now()) - (S.started || Date.now());
+  var d = new Date(S.finished || Date.now());
+  var months = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+  var dateStr = months[d.getMonth()] + ' ' + d.getDate() + ', ' + d.getFullYear();
+  var inTime = elapsed <= 50*60*1000;
+  var h = '<div class="cert">'+
+    '<svg class="seal" width="96" height="96" viewBox="0 0 96 96" role="img" aria-label="Studio seal">'+
+      '<g transform="translate(48,48)">'+
+      '<circle r="44" fill="#d6402c" stroke="#17140f" stroke-width="3"/>'+
+      '<circle r="35" fill="none" stroke="#f1e3c8" stroke-width="2"/>';
+  for(var a=0;a<24;a++){
+    h += '<rect x="-1.4" y="-45" width="2.8" height="7" fill="#17140f" transform="rotate('+(a*15)+')"/>';
+  }
+  h += '<text y="-6" font-family="Impact, sans-serif" font-size="13" fill="#f1e3c8" text-anchor="middle">GUTTER</text>'+
+       '<text y="8" font-family="Impact, sans-serif" font-size="13" fill="#f1e3c8" text-anchor="middle">&amp;GLORY</text>'+
+       '<text y="22" font-family="Courier New, monospace" font-size="8" fill="#f1e3c8" text-anchor="middle">STUDIO 9</text>'+
+       '</g></svg>'+
+    '<p class="ck">The Gutter &amp; Glory Studio &middot; Inkwell Lane</p>'+
+    '<h2>Certificate of Completion</h2>'+
+    '<p class="of">Elements of the Graphic Novel &mdash; Studio Escape</p>'+
+    '<div class="nameline">'+esc(S.name)+'</div>'+
+    '<p class="nsub">Letterer of record</p>'+
+    '<p class="body">has opened all nine panel locks of the Gutter &amp; Glory Studio and released the master exit door, '+
+    'demonstrating working command of page <b>layout</b>, <b>panels</b>, <b>frames</b>, <b>gutters</b>, <b>bleeds</b> and '+
+    'the <b>splash page</b>; of <b>captions</b>, <b>speech and thought balloons</b> and <b>sound effects</b>; and of '+
+    '<b>motion lines</b>, <b>shot distance</b> and <b>coloration</b> &mdash; decoded under lock and clock.</p>'+
+    '<div class="cert-stats">'+
+      '<div><span class="cs-l">Locks Opened</span><span class="cs-v">9 / 9</span></div>'+
+      '<div><span class="cs-l">Time On The Clock</span><span class="cs-v">'+fmt(elapsed)+'</span></div>'+
+      '<div><span class="cs-l">Hints Drawn</span><span class="cs-v">'+hintCount()+'</span></div>'+
+      '<div><span class="cs-l">Under 50:00</span><span class="cs-v">'+(inTime?'YES':'NO')+'</span></div>'+
+    '</div>'+
+    '<div class="cert-codex">';
+  for(var i=1;i<=9;i++){
+    h += '<span>Panel '+i+'<b>'+esc(S.solved[i]||'&mdash;')+'</b></span>';
+  }
+  h += '</div>'+
+    '<div class="sigrow">'+
+      '<div class="sig"><div class="rule" style="font-family:var(--font-serif); font-size:1.15rem; font-style:italic; text-align:center">Odessa Krahl</div><div class="sl">Founding Letterer, Studio 9</div></div>'+
+      '<div class="sig"><div class="rule"></div><div class="sl">Instructor signature</div></div>'+
+      '<div class="sig"><div class="rule" style="font-family:var(--font-tech); font-size:.86rem; text-align:center; padding-top:9px">'+dateStr+'</div><div class="sl">Date of escape</div></div>'+
+    '</div>'+
+    '<p class="nsub" style="margin:22px 0 0">Verification code '+verifyCode()+
+      ' &middot; issued by the Gutter &amp; Glory Studio, Inkwell Lane</p>'+
+    '</div>';
+  mount.innerHTML = h;
+  actions.innerHTML = '<button class="btn" id="cert-print">Print / Save As PDF</button>'+
+                      '<button class="btn ghost" id="cert-rename">Change Name</button>'+
+                      '<button class="btn ghost" id="cert-close">Back To The Studio</button>';
+  document.getElementById('cert-print').addEventListener('click', function(){ window.print(); });
+  document.getElementById('cert-rename').addEventListener('click', function(){ S.name=''; save(); openCert(); });
+  document.getElementById('cert-close').addEventListener('click', closeCert);
+}
+function closeCert(){ document.getElementById('cert-veil').classList.remove('open'); }
+
+/* ==================================================================
+   THE STUDIO HANDBOOK — the full curriculum, re-drawn
+   ================================================================== */
+function figLayout(){
+  return '<svg viewBox="0 0 300 168" role="img" aria-label="A comic page: three panels separated by gutters, one with a bold frame">'+
+    '<rect width="300" height="168" fill="#f1e3c8"/>'+
+    '<rect x="14" y="12" width="272" height="144" fill="none" stroke="#cdb98f" stroke-width="2" stroke-dasharray="6 5"/>'+
+    '<rect x="22" y="20" width="118" height="60" fill="#dcecf4" stroke="#17140f" stroke-width="1.6"/>'+
+    '<rect x="162" y="20" width="116" height="60" fill="#dcecf4" stroke="#17140f" stroke-width="1.6"/>'+
+    '<rect x="22" y="104" width="256" height="44" fill="#f6e2c0" stroke="#17140f" stroke-width="5"/>'+
+    '<g fill="#9fbfd0"><circle cx="60" cy="58" r="11"/><circle cx="200" cy="58" r="11"/></g>'+
+    '<g fill="#c9a06a"><rect x="40" y="126" width="30" height="14"/><rect x="120" y="120" width="44" height="20"/><rect x="210" y="128" width="36" height="12"/></g>'+
+    '<g stroke="#d6402c" stroke-width="1.6" fill="none">'+
+      '<path d="M140 50h22M151 44v12"/>'+
+      '<path d="M80 80v24M74 98l6 6 6-6"/>'+
+    '</g>'+
+    '<g font-family="Courier New, monospace" font-size="7.5" fill="#1c6b8f">'+
+      '<text x="146" y="40">GUTTER</text>'+
+      '<text x="88" y="96">GUTTER</text>'+
+      '<text x="24" y="16">LAYOUT: the arrangement of the panels on the page</text>'+
+      '<text x="26" y="100" fill="#d6402c">BOLD FRAME = bigger jump in time or place</text>'+
+    '</g>'+
+    '<g font-family="Impact, sans-serif" font-size="9" fill="#17140f">'+
+      '<text x="27" y="32">PANEL 1</text><text x="167" y="32">PANEL 2</text><text x="28" y="118">PANEL 3</text>'+
+    '</g></svg>';
+}
+function figGutter(){
+  return '<svg viewBox="0 0 300 120" role="img" aria-label="Narrow gutters mean a short passage of time; wide gutters mean a long one">'+
+    '<rect width="300" height="120" fill="#f1e3c8"/>'+
+    '<g fill="#dcecf4" stroke="#17140f" stroke-width="1.6">'+
+      '<rect x="12" y="16" width="40" height="34"/><rect x="55" y="16" width="40" height="34"/><rect x="98" y="16" width="40" height="34"/>'+
+      '<rect x="168" y="16" width="38" height="34"/><rect x="248" y="16" width="38" height="34"/>'+
+    '</g>'+
+    '<g stroke="#d6402c" stroke-width="1.4"><path d="M52 60v8h43v-8M206 60v8h42v-8"/></g>'+
+    '<g font-family="Courier New, monospace" font-size="7.5" fill="#1c6b8f">'+
+      '<text x="12" y="12">SECONDS APART</text><text x="168" y="12">HOURS, DAYS, YEARS APART</text>'+
+      '<text x="12" y="84">Very small or absent gutters:</text><text x="12" y="95">a very short passage of time.</text>'+
+      '<text x="168" y="84">Larger gutters:</text><text x="168" y="95">a longer period of time.</text>'+
+    '</g></svg>';
+}
+function figBleed(){
+  return '<svg viewBox="0 0 300 130" role="img" aria-label="A bleed: the contents of the panel move beyond the frame">'+
+    '<rect width="300" height="130" fill="#f1e3c8"/>'+
+    '<rect x="40" y="18" width="150" height="92" fill="#dcecf4" stroke="#17140f" stroke-width="3.5"/>'+
+    '<g fill="#d6402c" stroke="#17140f" stroke-width="2">'+
+      '<path d="M120 96l24-52 16 26 18-34 34 60z"/>'+
+    '</g>'+
+    '<g stroke="#e3a723" stroke-width="3" stroke-linecap="round">'+
+      '<path d="M170 42l48-22M176 58l60-8M168 74l52 16"/>'+
+    '</g>'+
+    '<g font-family="Courier New, monospace" font-size="8" fill="#1c6b8f">'+
+      '<text x="40" y="14">FRAME</text><text x="196" y="122" fill="#d6402c">the art keeps going &mdash; this is a BLEED</text>'+
+    '</g>'+
+    '<path d="M190 66h26" stroke="#d6402c" stroke-width="1.4"/></svg>';
+}
+function figSplash(){
+  return '<svg viewBox="0 0 300 150" role="img" aria-label="A splash page: one panel taking up the entire page">'+
+    '<rect width="300" height="150" fill="#f1e3c8"/>'+
+    '<rect x="16" y="12" width="268" height="126" fill="#221d16" stroke="#17140f" stroke-width="4"/>'+
+    '<g stroke="#f1e3c8" stroke-width="1" opacity=".3">'+
+      '<path d="M150 74L16 12M150 74L150 12M150 74L284 12M150 74L284 74M150 74L284 138M150 74L150 138M150 74L16 138M150 74L16 74"/>'+
+    '</g>'+
+    '<g fill="#e3a723" stroke="#17140f" stroke-width="2">'+
+      '<path d="M150 30l10 22 24-6-12 22 22 14-24 8 6 24-22-14-16 20-6-24-24 2 12-22-20-16 24-6-4-24z"/>'+
+    '</g>'+
+    '<text x="150" y="82" font-family="Impact, sans-serif" font-size="20" fill="#17140f" text-anchor="middle">KRAKK!</text>'+
+    '<text x="20" y="9" font-family="Courier New, monospace" font-size="7.5" fill="#1c6b8f">SPLASH PAGE: one panel takes up the entire page</text></svg>';
+}
+function figText(){
+  return '<svg viewBox="0 0 300 160" role="img" aria-label="A caption box, a speech balloon, a thought balloon and a sound effect">'+
+    '<rect width="300" height="160" fill="#f1e3c8"/>'+
+    '<rect x="10" y="10" width="280" height="140" fill="#dcecf4" stroke="#17140f" stroke-width="3"/>'+
+    '<rect x="18" y="18" width="120" height="30" fill="#f6ecd6" stroke="#17140f" stroke-width="2"/>'+
+    '<text x="24" y="31" font-family="Palatino, serif" font-size="8.5" font-style="italic">Later, on the third floor,</text>'+
+    '<text x="24" y="42" font-family="Palatino, serif" font-size="8.5" font-style="italic">the press was still warm.</text>'+
+    '<path d="M150 20h130v36h-62l-16 15 4-15h-56z" fill="#f6ecd6" stroke="#17140f" stroke-width="2.4"/>'+
+    '<text x="215" y="42" font-family="Impact, sans-serif" font-size="13" text-anchor="middle">WHO&rsquo;S THERE?</text>'+
+    '<path d="M40 92q-14 0-14 10t12 10q-2 12 10 12 4 9 16 4 9 9 20 0 14 4 14-10 12-4 8-16-2-12-16-10-6-11-18-6-9-9-22 2-7-4-12 4z" fill="#f6ecd6" stroke="#17140f" stroke-width="2.4"/>'+
+    '<circle cx="44" cy="133" r="5" fill="#f6ecd6" stroke="#17140f" stroke-width="2"/>'+
+    '<circle cx="34" cy="142" r="3" fill="#f6ecd6" stroke="#17140f" stroke-width="1.8"/>'+
+    '<text x="72" y="114" font-family="Impact, sans-serif" font-size="11" text-anchor="middle">NOBODY, I HOPE.</text>'+
+    '<text x="210" y="122" font-family="Impact, sans-serif" font-size="26" fill="#d6402c" transform="rotate(-9 210 122)">CLANG!</text>'+
+    '<g font-family="Courier New, monospace" font-size="7" fill="#1c6b8f">'+
+      '<text x="18" y="57">CAPTION &mdash; the narrator&rsquo;s voice, boxed off</text>'+
+      '<text x="150" y="66">SPEECH BALLOON &mdash; pointed tail</text>'+
+      '<text x="18" y="152">THOUGHT BALLOON &mdash; cloud + bubble trail</text>'+
+      '<text x="176" y="140" fill="#d6402c">SOUND EFFECT &mdash; onomatopoeia</text>'+
+    '</g></svg>';
+}
+function figMotion(){
+  return '<svg viewBox="0 0 300 120" role="img" aria-label="Motion lines showing movement on a still drawing">'+
+    '<rect width="300" height="120" fill="#f1e3c8"/>'+
+    '<rect x="10" y="10" width="280" height="100" fill="#dcecf4" stroke="#17140f" stroke-width="3"/>'+
+    '<g stroke="#17140f" stroke-width="2" stroke-linecap="round" fill="none">'+
+      '<path d="M40 44h70M30 60h80M44 76h66"/>'+
+    '</g>'+
+    '<g stroke="#17140f" stroke-width="2.4" fill="#c98a5e">'+
+      '<circle cx="170" cy="40" r="11"/>'+
+      '<path d="M170 51v26M155 60l15-6 16 6M158 100l12-23 13 23"/>'+
+    '</g>'+
+    '<g stroke="#d6402c" stroke-width="2" fill="none"><path d="M196 34q16 6 0 14"/></g>'+
+    '<text x="18" y="30" font-family="Courier New, monospace" font-size="7.5" fill="#1c6b8f">MOTION LINES: small lines that show movement on a still drawing</text></svg>';
+}
+function figShots(){
+  var h = '<div style="display:grid; grid-template-columns:repeat(7,1fr); gap:5px; padding:10px">';
+  for(var i=0;i<7;i++){
+    h += '<div style="text-align:center">'+shotSVG(i)+
+         '<div style="font-family:var(--font-tech); font-size:.46rem; letter-spacing:.05em; text-transform:uppercase; line-height:1.3; padding-top:3px">'+SHOTS[i].lab+'</div></div>';
+  }
+  return h + '</div>';
+}
+
+function openHandbook(){
+  var h = '<div class="caption-box">Odessa&rsquo;s own reference shelf. Every term the studio&rsquo;s locks ask about lives '+
+          'on this page. It stays open as long as you like &mdash; the clock does not stop for it.</div>';
+  h += '<h3 class="blk">Structure Of The Page</h3><div class="hb-grid">';
+
+  h += '<div class="hb-card"><div class="hbh">Layout, Panels, Frames &amp; Gutters</div>'+
+       '<div class="hb-fig">'+figLayout()+'</div>'+
+       '<div class="hb-cap">A page is a layout of panels; the spaces in between are gutters.</div>'+
+       '<div class="hbb"><dl>'+
+       '<dt>Layout</dt><dd>How the panels are arranged on a page.</dd>'+
+       '<dt>Panel</dt><dd>A single drawing that depicts a frozen moment in time.</dd>'+
+       '<dt>Frame</dt><dd>The border around the panel. <b>Light frames</b> mean the scenes are close together in time and location; <b>dark, bold frames</b> indicate a greater separation between scenes.</dd>'+
+       '<dt>Gutter</dt><dd>The spaces between the frames, which help the reader transition from one scene to another.</dd>'+
+       '</dl></div></div>';
+
+  h += '<div class="hb-card"><div class="hbh">Gutters &amp; Time</div>'+
+       '<div class="hb-fig">'+figGutter()+'</div>'+
+       '<div class="hb-cap">The width of the gutter is how a page measures time.</div>'+
+       '<div class="hbb"><dl>'+
+       '<dt>Larger gutters</dt><dd>Indicate a longer period of time between the panels.</dd>'+
+       '<dt>Very small or absent gutters</dt><dd>Indicate a very short passage of time &mdash; often a single continuous action.</dd>'+
+       '</dl></div></div>';
+
+  h += '<div class="hb-card"><div class="hbh">Bleed</div>'+
+       '<div class="hb-fig">'+figBleed()+'</div>'+
+       '<div class="hb-cap">The contents of the panel move beyond the frame.</div>'+
+       '<div class="hbb"><dl><dt>Bleed</dt><dd>When the contents of a panel move beyond the frame. It breaks the border on purpose &mdash; the moment is too big for its box.</dd></dl></div></div>';
+
+  h += '<div class="hb-card"><div class="hbh">Splash Page</div>'+
+       '<div class="hb-fig">'+figSplash()+'</div>'+
+       '<div class="hb-cap">One panel, the whole page.</div>'+
+       '<div class="hbb"><dl><dt>Splash page</dt><dd>One panel that takes up the entire page. Used for openings and for the loudest beat in a story.</dd></dl></div></div>';
+
+  h += '</div><h3 class="blk">Text Elements</h3><div class="hb-grid">';
+
+  h += '<div class="hb-card"><div class="hbh">Captions, Balloons &amp; Sound</div>'+
+       '<div class="hb-fig">'+figText()+'</div>'+
+       '<div class="hb-cap">Boxed narration, spoken lines, private thought, and noise.</div>'+
+       '<div class="hbb"><dl>'+
+       '<dt>Captions</dt><dd>Words in a box, separated from the rest of the panel. Captions give voice to a narrator, introduce characters, and provide background information.</dd>'+
+       '<dt>Speech &amp; thought balloons</dt><dd>A circle or oval filled with text that represents what a character is saying or thinking.</dd>'+
+       '<dt>Sound effects</dt><dd><b>Onomatopoeia</b> &mdash; words that mimic sounds, typically written in a stylistic font.</dd>'+
+       '</dl></div></div>';
+
+  h += '<div class="hb-card"><div class="hbh">The Six Balloon Shapes</div>'+
+       '<div class="hb-fig" style="padding:9px; display:grid; grid-template-columns:repeat(2,1fr); gap:7px">';
+  for(var b=0;b<BTYPES.length;b++){
+    h += '<div style="text-align:center">'+balloonSVG(b)+
+         '<div style="font-family:var(--font-tech); font-size:.5rem; letter-spacing:.11em; padding-top:2px">'+BTYPES[b]+'</div></div>';
+  }
+  h += '</div><div class="hb-cap">Shape carries tone before a single word is read.</div>'+
+       '<div class="hbb"><dl>'+
+       '<dt>Speech</dt><dd>Solid oval, pointed tail to the speaker.</dd>'+
+       '<dt>Thought</dt><dd>Scalloped cloud with a trail of bubbles.</dd>'+
+       '<dt>Whisper</dt><dd>Dashed, broken outline; small type.</dd>'+
+       '<dt>Burst</dt><dd>Jagged, spiked edge &mdash; a shout or an impact.</dd>'+
+       '<dt>Radio</dt><dd>Boxed with a zig-zag edge and a lightning tail.</dd>'+
+       '<dt>Telepathic</dt><dd>Double outline with radiating marks.</dd>'+
+       '</dl></div></div>';
+
+  h += '</div><h3 class="blk">Artistic Elements</h3><div class="hb-grid">';
+
+  h += '<div class="hb-card"><div class="hbh">Motion Lines</div>'+
+       '<div class="hb-fig">'+figMotion()+'</div>'+
+       '<div class="hb-cap">A still drawing that is clearly moving.</div>'+
+       '<div class="hbb"><dl><dt>Motion lines</dt><dd>Small lines that show movement on a still drawing.</dd></dl></div></div>';
+
+  h += '<div class="hb-card" style="grid-column:1/-1"><div class="hbh">Shot Distance &mdash; Tightest To Widest</div>'+
+       '<div class="hb-fig">'+figShots()+'</div>'+
+       '<div class="hb-cap">Distance is a choice about what the reader is allowed to feel and what they are allowed to see.</div>'+
+       '<div class="hbb"><dl>'+
+       '<dt>Close up / Extreme close up</dt><dd>The perspective is very near to the subject. Used to convey emotion.</dd>'+
+       '<dt>Long shot / Extreme long shot</dt><dd>The perspective is distant from the subject. Used to show setting.</dd>'+
+       '</dl></div></div>';
+
+  h += '<div class="hb-card" style="grid-column:1/-1"><div class="hbh">Coloration</div>'+
+       '<div class="hbb"><p style="font-family:var(--font-serif); margin:0 0 11px"><b>Coloration:</b> the intentional use of colour '+
+       'to make events seem realistic and to create a mood.</p><table class="swatch-tbl"><tbody>';
+  var CMEAN = {
+    RED:'bold, energetic, passionate, determined', ORANGE:'enthusiastic, potent, humorous',
+    YELLOW:'attentive, safe, energetic', GREEN:'nature, growth, safe, harmonious, mystic',
+    BLUE:'deep, stable, knowing, trustworthy, confident', PURPLE:'royal, knowledgeable, creative',
+    BLACK:'mysterious, elegant', WHITE:'spacious, eternal, pure', BROWN:'grounded, earthy, gritty',
+    GREY:'ambiguous, smoky, mechanical, cold', PINK:'nostalgia, femininity'
+  };
+  for(var t=0;t<TUBES.length;t++){
+    h += '<tr><td><i style="background:'+TUBES[t].hex+'"></i></td><td><b>'+TUBES[t].n+'</b></td><td>'+CMEAN[TUBES[t].n]+'</td></tr>';
+  }
+  h += '</tbody></table></div></div>';
+  h += '</div>';
+
+  openSheet('Reference &middot; Odessa&rsquo;s shelf', 'The Studio Handbook', h);
+}
+
+/* ==================================================================
+   BOOT
+   ================================================================== */
+load();
+renderRoom();
+renderCodex();
+renderDoor();
+
+document.getElementById('btn-handbook').addEventListener('click', openHandbook);
+document.getElementById('btn-reset').addEventListener('click', function(){
+  if(!window.confirm('Reset the studio? Every lock closes, the codex empties and the clock restarts from zero.')) return;
+  try{ localStorage.removeItem(STORE); }catch(e){}
+  S = { solved:{}, hintsUsed:{}, started:Date.now(), finished:null, name:'', work:{} };
+  DOORSET.dials = [0,0,0,0];
+  save();
+  closeSheet(); closeCert();
+  var stampT = document.getElementById('door-stamp-text');
+  if(stampT) stampT.textContent = 'SEALED';
+  var stamp = document.getElementById('door-stamp');
+  if(stamp) stamp.setAttribute('fill','#d6402c');
+  var chain = document.getElementById('door-chain');
+  if(chain) chain.style.display = '';
+  document.getElementById('door-splash').removeAttribute('data-open');
+  renderRoom(); renderCodex(); renderDoor(); tickClock();
+  toast('Studio reset. The door is sealed again.');
+});
+
+tickClock();
+setInterval(tickClock, 1000);
+
+if(S.finished) toast('Welcome back. The exit door is already open &mdash; your certificate is waiting.', true);
+else if(solvedCount() > 0) toast('Welcome back. '+solvedCount()+' of 9 locks still open from your last shift.');
+else toast('Click any artifact on the drafting floor to begin. Eight panels, any order.');
+
+})();
+</script>
+</body>
+</html>

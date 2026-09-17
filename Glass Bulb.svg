@@ -1,0 +1,9 @@
+<svg width="25" height="28" viewBox="0 0 25 28" fill="none" xmlns="http://www.w3.org/2000/svg">
+<path d="M8.87097 0C8.87097 1.62376 0 6.8198 0 16.5624C0 26.305 6.45161 28 12.5 28C18.5484 28 25 26.305 25 16.5624C25 6.8198 16.129 1.62376 16.129 0H8.87097Z" fill="url(#paint0_radial_2028_51)"/>
+<defs>
+<radialGradient id="paint0_radial_2028_51" cx="0" cy="0" r="1" gradientUnits="userSpaceOnUse" gradientTransform="translate(12.5 14) rotate(90) scale(14 12.5)">
+<stop stop-color="#FFFBAE"/>
+<stop offset="1" stop-color="#FFFBF1"/>
+</radialGradient>
+</defs>
+</svg>
